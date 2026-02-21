@@ -538,26 +538,52 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
         try {
           const os = await import("os");
           const tasksDir = join(os.homedir(), ".turboclaw", "tasks");
-          const { mkdirSync, existsSync } = await import("fs");
+          const { mkdirSync, existsSync, writeFileSync } = await import("fs");
+          const yaml = await import("yaml");
 
           // Ensure tasks directory exists
           if (!existsSync(tasksDir)) {
             mkdirSync(tasksDir, { recursive: true });
           }
 
-          // Create daily memory consolidation task
-          const consolidationTask = {
-            name: `${id} Memory Consolidation`,
-            schedule: "0 2 * * *", // 2am daily
-            action: {
-              type: "agent-message",
-              agent: id as string,
-              message: "memory --consolidate",
-            },
-            enabled: true,
-          };
+          const scheduleNotes: string[] = [];
 
-          // Create context clearing task (every 6 hours)
+          // Memory consolidation: one shared task for shared mode, per-agent for isolated
+          if (memoryMode === "shared") {
+            const sharedConsolidationFile = join(tasksDir, "shared-memory-consolidation.yaml");
+            if (!existsSync(sharedConsolidationFile)) {
+              const consolidationTask = {
+                name: "Shared Memory Consolidation",
+                schedule: "0 2 * * *", // 2am daily
+                action: {
+                  type: "agent-message",
+                  agent: id as string,
+                  message: "memory --consolidate",
+                },
+                enabled: true,
+              };
+              writeFileSync(sharedConsolidationFile, yaml.stringify(consolidationTask), "utf-8");
+              scheduleNotes.push("✓ Daily shared memory consolidation (2am)");
+            } else {
+              scheduleNotes.push("✓ Shared memory consolidation already scheduled (skipped)");
+            }
+          } else {
+            const consolidationTask = {
+              name: `${id} Memory Consolidation`,
+              schedule: "0 2 * * *", // 2am daily
+              action: {
+                type: "agent-message",
+                agent: id as string,
+                message: "memory --consolidate",
+              },
+              enabled: true,
+            };
+            const consolidationFile = join(tasksDir, `${id}-memory-consolidation.yaml`);
+            writeFileSync(consolidationFile, yaml.stringify(consolidationTask), "utf-8");
+            scheduleNotes.push("✓ Daily memory consolidation (2am)");
+          }
+
+          // Context clearing is always per-agent (clears agent conversation, not memory files)
           const contextClearTask = {
             name: `${id} Memory Context Clearing`,
             schedule: "0 */6 * * *", // Every 6 hours
@@ -568,27 +594,11 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
             },
             enabled: true,
           };
-
-          // Save tasks
-          const { writeFileSync } = await import("fs");
-          const yaml = await import("yaml");
-
-          const consolidationFile = join(
-            tasksDir,
-            `${id}-memory-consolidation.yaml`
-          );
-          writeFileSync(consolidationFile, yaml.stringify(consolidationTask), "utf-8");
-
-          const contextClearFile = join(
-            tasksDir,
-            `${id}-memory-context-clearing.yaml`
-          );
+          const contextClearFile = join(tasksDir, `${id}-memory-context-clearing.yaml`);
           writeFileSync(contextClearFile, yaml.stringify(contextClearTask), "utf-8");
+          scheduleNotes.push("✓ Memory context clearing (every 6 hours)");
 
-          prompts.note(
-            `✓ Daily memory consolidation (2am)\n✓ Memory context clearing (every 6 hours)`,
-            "Memory schedules created"
-          );
+          prompts.note(scheduleNotes.join("\n"), "Memory schedules created");
         } catch (error) {
           logger.warn("Failed to create memory schedules", { error });
           // Don't fail agent creation if schedule creation fails
