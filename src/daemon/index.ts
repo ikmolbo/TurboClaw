@@ -10,7 +10,8 @@
  *   - runDaemon(options?): Promise<void>
  */
 
-import { createLogger } from "../lib/logger";
+import { createLogger, enableFileLogging, disableFileLogging } from "../lib/logger";
+import { LogRotator } from "../lib/log-rotator";
 import { loadConfig, type Config } from "../config";
 import { createDaemonCrashGuard } from "../lib/crash-guard";
 import {
@@ -206,6 +207,13 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
   const resetDir =
     options?.resetDir ?? path.join(os.homedir(), ".turboclaw", "reset");
 
+  // Set up file logging with rotation
+  const logsDir = path.join(baseDir, "logs");
+  const rotator = new LogRotator({
+    filePath: path.join(logsDir, "daemon.log"),
+  });
+  enableFileLogging(rotator);
+
   // Check crash guard
   const crashGuard = createDaemonCrashGuard(baseDir);
   const { allowed } = await crashGuard.shouldAllowRestart();
@@ -386,6 +394,7 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     process.off("SIGTERM", shutdown);
     process.off("SIGINT", shutdown);
   } finally {
+    disableFileLogging();
     removePidFile(pidFile);
   }
 }

@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import type { LogRotator } from "./log-rotator";
 
 // Force chalk to output colors even in non-TTY environments (e.g., tests)
 chalk.level = 3;
@@ -11,9 +12,30 @@ export enum LogLevel {
 }
 
 let currentLogLevel: LogLevel = LogLevel.DEBUG;
+let fileRotator: LogRotator | null = null;
+
+const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*m/g, "");
 
 export function setLogLevel(level: LogLevel): void {
   currentLogLevel = level;
+}
+
+/**
+ * Enable file logging with the given LogRotator.
+ * Log lines are stripped of ANSI codes before writing.
+ */
+export function enableFileLogging(rotator: LogRotator): void {
+  fileRotator = rotator;
+}
+
+/**
+ * Disable file logging and close the rotator.
+ */
+export function disableFileLogging(): void {
+  if (fileRotator) {
+    fileRotator.close();
+    fileRotator = null;
+  }
 }
 
 export interface Logger {
@@ -84,7 +106,12 @@ function log(level: LogLevel, component: string, message: string, data: any): vo
       : message;
   const dataStr = formatData(data);
 
-  console.log(`${time} ${symbol} ${comp} ${msg}${dataStr}`);
+  const line = `${time} ${symbol} ${comp} ${msg}${dataStr}`;
+  console.log(line);
+
+  if (fileRotator) {
+    fileRotator.write(stripAnsi(line));
+  }
 }
 
 export function createLogger(component: string): Logger {
