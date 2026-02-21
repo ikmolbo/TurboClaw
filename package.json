@@ -1,0 +1,33 @@
+{
+  "name": "turboclaw",
+  "version": "0.0.1",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "turboclaw": "./bin/turboclaw"
+  },
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "dev": "bun run --watch index.ts",
+    "build": "bun build ./src/cli/index.ts --outdir ./dist --target bun",
+    "start": "bun run index.ts",
+    "cli": "bun run src/cli/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.0.1",
+    "chalk": "^5.6.2",
+    "croner": "^10.0.1",
+    "date-fns": "^4.1.0",
+    "grammy": "^1.40.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  }
+}

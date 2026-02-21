@@ -1,0 +1,33 @@
+# ~/.turboclaw/config.yaml
+# TurboClaw Configuration Example
+
+workspace:
+  path: ~/.turboclaw/workspaces
+
+# Telegram user ID whitelist (empty or omitted = allow all)
+# allowed_users:
+#   - 123456789
+
+providers:
+  anthropic:
+    # api_key: sk-ant-...       # or use ANTHROPIC_API_KEY env var
+    # base_url: https://...     # optional custom endpoint
+
+agents:
+  coder:
+    name: Code Assistant
+    provider: anthropic
+    model: sonnet               # opus, sonnet, haiku, or full model ID
+    working_directory: ~/.turboclaw/workspaces/coder
+    heartbeat_interval: 10800   # seconds (3 hours), or false to disable
+    memory_mode: isolated       # shared or isolated
+    telegram:
+      bot_token: "123456:ABC..."
+
+# Audio transcription (optional)
+# Credentials are pulled from the named provider in the providers section above.
+# transcription:
+#   enabled: true
+#   provider: openai            # must match a key in providers above
+#   model: whisper-1
+#   retain_audio: false

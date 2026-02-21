@@ -1,0 +1,24 @@
+# Example: Conditional Task
+# This task only runs if the condition command returns exit code 0
+
+name: Conditional Report
+schedule: "0 9 * * *"  # Every day at 9 AM
+action:
+  type: agent-message
+  agent: reporter
+  message: "Generate daily report based on ready data"
+
+  # Optional: Only run if data file exists
+  # The condition command is executed first
+  # If it returns exit code 0, the task runs
+  # If it returns non-zero, the task is skipped
+  condition: "test -f /tmp/data-ready.flag"
+
+enabled: true
+lastRun: null
+
+# To use this task:
+# 1. Save to ~/.turboclaw/tasks/conditional-report.yaml
+# 2. Create the condition: touch /tmp/data-ready.flag
+# 3. The task will run at 9 AM if the flag file exists
+# 4. Remove the flag to skip: rm /tmp/data-ready.flag
