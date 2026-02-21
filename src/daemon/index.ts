@@ -17,6 +17,7 @@ import {
   readIncoming,
   readOutgoing,
   deleteMessage,
+  writeIncoming,
   initializeQueue,
   type IncomingMessage,
 } from "../lib/queue";
@@ -151,8 +152,11 @@ export async function handleMessage(
           (resolve as any)(noop);
         },
         onComplete: async (result) => {
-          if (streamer) {
-            await streamer.finalize(result.output || "");
+          const output = result.output || "";
+          if (output.trim() === "HEARTBEAT_OK") {
+            logger.info("Heartbeat OK — no action needed", { agentId });
+          } else if (streamer) {
+            await streamer.finalize(output);
           }
           (resolve as any)(noop);
         },
@@ -286,6 +290,7 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     let lastSchedulerRun = 0;
     const SCHEDULER_INTERVAL_MS = 30 * 1000; // 30 seconds
     const POLL_INTERVAL_MS = 1000; // 1 second
+    const lastHeartbeat = new Map<string, number>();
 
     while (running) {
       // Process incoming queue
@@ -311,6 +316,58 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
         processTasksNonBlocking(tasksDir, queueDir, new Date()).catch((err) => {
           logger.error("Scheduler tick error", err);
         });
+      }
+
+      // Check heartbeats for agents with heartbeat_interval and chat_id
+      for (const [agentId, agent] of Object.entries(config.agents)) {
+        const interval = agent.heartbeat_interval;
+        if (!interval || interval === false) continue;
+        if (!agent.telegram?.chat_id) continue;
+
+        const lastBeat = lastHeartbeat.get(agentId) ?? 0;
+        const intervalMs = (interval as number) * 1000;
+        if (now - lastBeat < intervalMs) continue;
+
+        // Read HEARTBEAT.md from agent's working directory
+        try {
+          const heartbeatPath = path.join(agent.working_directory, "HEARTBEAT.md");
+          const file = Bun.file(heartbeatPath);
+          const exists = await file.exists();
+          if (!exists) {
+            logger.warn("HEARTBEAT.md not found, skipping heartbeat", { agentId, heartbeatPath });
+            lastHeartbeat.set(agentId, now);
+            continue;
+          }
+
+          const content = await file.text();
+          const trimmed = content.trim();
+          // Skip if empty or only comments
+          const nonCommentLines = trimmed.split("\n").filter((line) => !line.startsWith("#") && line.trim() !== "");
+          if (nonCommentLines.length === 0) {
+            logger.warn("HEARTBEAT.md is empty or only comments, skipping", { agentId });
+            lastHeartbeat.set(agentId, now);
+            continue;
+          }
+
+          // Queue heartbeat as an incoming message
+          await writeIncoming(
+            {
+              channel: "telegram",
+              sender: "heartbeat",
+              senderId: String(agent.telegram.chat_id),
+              message: content,
+              timestamp: now,
+              messageId: `heartbeat-${agentId}-${now}`,
+              agentId,
+            },
+            queueDir
+          );
+
+          lastHeartbeat.set(agentId, now);
+          logger.info("Queued heartbeat for agent", { agentId });
+        } catch (error) {
+          logger.error("Failed to queue heartbeat", { agentId, error });
+        }
       }
 
       await Bun.sleep(POLL_INTERVAL_MS);

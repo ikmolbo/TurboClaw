@@ -8,7 +8,7 @@
  * Key design changes from the old 4-file layout:
  *   - Custom cron parser replaced with croner library
  *   - 4 files (schema.ts, parser.ts, executor.ts, tick.ts) merged into index.ts
- *   - cleanup action simplified: no cleanupType field required
+ *   - Only agent-message and command action types remain
  *   - processTasksNonBlocking updates lastRun BEFORE execution
  */
 
@@ -62,19 +62,6 @@ function makeHeartbeatTask(overrides: Partial<Task> = {}): Task {
     action: {
       type: "heartbeat",
       agent: "coder",
-    },
-    enabled: true,
-    ...overrides,
-  };
-}
-
-/** Build a minimal valid cleanup task (simplified — no cleanupType) */
-function makeCleanupTask(overrides: Partial<Task> = {}): Task {
-  return {
-    name: "Daily cleanup",
-    schedule: "0 3 * * *",
-    action: {
-      type: "cleanup",
     },
     enabled: true,
     ...overrides,
@@ -155,20 +142,6 @@ describe("validateTask — schema validation", () => {
     });
   });
 
-  describe("cleanup (simplified — no cleanupType)", () => {
-    test("accepts valid cleanup task without cleanupType", () => {
-      const result = validateTask(makeCleanupTask());
-      expect(result.success).toBe(true);
-    });
-
-    test("accepts cleanup task with optional command override", () => {
-      const result = validateTask(
-        makeCleanupTask({ action: { type: "cleanup", command: "rm -rf /tmp/test-*" } })
-      );
-      expect(result.success).toBe(true);
-    });
-  });
-
   describe("command", () => {
     test("accepts valid command task", () => {
       const result = validateTask(makeCommandTask("echo hello"));
@@ -194,7 +167,7 @@ describe("validateTask — schema validation", () => {
     test("rejects task missing name", () => {
       const data = {
         schedule: "* * * * *",
-        action: { type: "heartbeat", agent: "coder" },
+        action: { type: "agent-message", agent: "coder", message: "hi" },
         enabled: true,
       };
       const result = validateTask(data);
@@ -205,7 +178,7 @@ describe("validateTask — schema validation", () => {
       const data = {
         name: "",
         schedule: "* * * * *",
-        action: { type: "heartbeat", agent: "coder" },
+        action: { type: "agent-message", agent: "coder", message: "hi" },
         enabled: true,
       };
       const result = validateTask(data);
@@ -215,7 +188,7 @@ describe("validateTask — schema validation", () => {
     test("rejects task missing schedule", () => {
       const data = {
         name: "No schedule",
-        action: { type: "heartbeat", agent: "coder" },
+        action: { type: "agent-message", agent: "coder", message: "hi" },
         enabled: true,
       };
       const result = validateTask(data);
@@ -226,7 +199,7 @@ describe("validateTask — schema validation", () => {
       const data = {
         name: "Test",
         schedule: "* * * * *",
-        action: { type: "heartbeat", agent: "coder" },
+        action: { type: "agent-message", agent: "coder", message: "hi" },
       };
       const result = validateTask(data);
       expect(result.success).toBe(true);
@@ -236,7 +209,7 @@ describe("validateTask — schema validation", () => {
     });
 
     test("accepts enabled: false", () => {
-      const task = makeHeartbeatTask({ enabled: false });
+      const task = makeAgentMessageTask({ enabled: false });
       const result = validateTask(task);
       expect(result.success).toBe(true);
       if (result.success) {
@@ -245,19 +218,19 @@ describe("validateTask — schema validation", () => {
     });
 
     test("accepts lastRun as ISO 8601 timestamp", () => {
-      const task = makeHeartbeatTask({ lastRun: "2026-02-17T02:00:00.000Z" });
+      const task = makeAgentMessageTask({ lastRun: "2026-02-17T02:00:00.000Z" });
       const result = validateTask(task);
       expect(result.success).toBe(true);
     });
 
     test("accepts lastRun as null", () => {
-      const task = makeHeartbeatTask({ lastRun: null });
+      const task = makeAgentMessageTask({ lastRun: null });
       const result = validateTask(task);
       expect(result.success).toBe(true);
     });
 
     test("accepts lastRun omitted (undefined)", () => {
-      const task = makeHeartbeatTask();
+      const task = makeAgentMessageTask();
       delete (task as any).lastRun;
       const result = validateTask(task);
       expect(result.success).toBe(true);
@@ -266,6 +239,14 @@ describe("validateTask — schema validation", () => {
     test("accepts conditional field in action", () => {
       const task = makeCommandTask("echo hi", {
         action: { type: "command", command: "echo hi", condition: "test -f /tmp/flag" },
+      });
+      const result = validateTask(task);
+      expect(result.success).toBe(true);
+    });
+
+    test("accepts replyTo field in agent-message action", () => {
+      const task = makeAgentMessageTask({
+        action: { type: "agent-message", agent: "coder", message: "hi", replyTo: "123456789" },
       });
       const result = validateTask(task);
       expect(result.success).toBe(true);
@@ -426,7 +407,7 @@ describe("loadTaskFiles — reads YAML task files from directory", () => {
   });
 
   test("loads valid .yaml task files", async () => {
-    const task1 = makeHeartbeatTask({ name: "Task Alpha" });
+    const task1 = makeAgentMessageTask({ name: "Task Alpha" });
     const task2 = makeCommandTask("echo hello", { name: "Task Beta" });
     writeFileSync(join(tasksDir, "alpha.yaml"), YAML.stringify(task1));
     writeFileSync(join(tasksDir, "beta.yaml"), YAML.stringify(task2));
@@ -440,7 +421,7 @@ describe("loadTaskFiles — reads YAML task files from directory", () => {
   });
 
   test("each TaskFile includes filename (absolute path) and task", async () => {
-    const task = makeHeartbeatTask({ name: "Filepath Task" });
+    const task = makeAgentMessageTask({ name: "Filepath Task" });
     writeFileSync(join(tasksDir, "fp.yaml"), YAML.stringify(task));
 
     const result = await loadTaskFiles(tasksDir);
@@ -451,7 +432,7 @@ describe("loadTaskFiles — reads YAML task files from directory", () => {
 
   test("counts errors for invalid YAML files and continues", async () => {
     writeFileSync(join(tasksDir, "broken.yaml"), "invalid: [[[yaml syntax");
-    const task = makeHeartbeatTask({ name: "Good Task" });
+    const task = makeAgentMessageTask({ name: "Good Task" });
     writeFileSync(join(tasksDir, "good.yaml"), YAML.stringify(task));
 
     const result = await loadTaskFiles(tasksDir);
@@ -461,10 +442,10 @@ describe("loadTaskFiles — reads YAML task files from directory", () => {
   });
 
   test("counts errors for schema-invalid task files and continues", async () => {
-    // Missing required 'agent' field for heartbeat
-    const bad = { name: "Bad Task", schedule: "* * * * *", action: { type: "heartbeat" }, enabled: true };
+    // Missing required 'agent' field for agent-message
+    const bad = { name: "Bad Task", schedule: "* * * * *", action: { type: "agent-message" }, enabled: true };
     writeFileSync(join(tasksDir, "bad.yaml"), YAML.stringify(bad));
-    const good = makeHeartbeatTask({ name: "Good Task" });
+    const good = makeAgentMessageTask({ name: "Good Task" });
     writeFileSync(join(tasksDir, "good.yaml"), YAML.stringify(good));
 
     const result = await loadTaskFiles(tasksDir);
@@ -475,7 +456,7 @@ describe("loadTaskFiles — reads YAML task files from directory", () => {
   test("ignores non-.yaml files", async () => {
     writeFileSync(join(tasksDir, "README.md"), "# ignore me");
     writeFileSync(join(tasksDir, "config.json"), JSON.stringify({ foo: "bar" }));
-    const task = makeHeartbeatTask();
+    const task = makeAgentMessageTask();
     writeFileSync(join(tasksDir, "task.yaml"), YAML.stringify(task));
 
     const result = await loadTaskFiles(tasksDir);
@@ -498,7 +479,7 @@ describe("saveTask — atomic YAML write", () => {
   });
 
   test("writes a task file to disk", async () => {
-    const task = makeHeartbeatTask({ name: "Persist Me" });
+    const task = makeAgentMessageTask({ name: "Persist Me" });
     const filepath = join(dir, "persist.yaml");
 
     await saveTask(filepath, task);
@@ -510,7 +491,7 @@ describe("saveTask — atomic YAML write", () => {
   });
 
   test("does NOT leave a .tmp file behind after write", async () => {
-    const task = makeHeartbeatTask();
+    const task = makeAgentMessageTask();
     const filepath = join(dir, "atomic.yaml");
     await saveTask(filepath, task);
 
@@ -518,7 +499,7 @@ describe("saveTask — atomic YAML write", () => {
   });
 
   test("overwrites existing file with updated task", async () => {
-    const task = makeHeartbeatTask({ name: "Original Name" });
+    const task = makeAgentMessageTask({ name: "Original Name" });
     const filepath = join(dir, "overwrite.yaml");
     await saveTask(filepath, task);
 
@@ -586,6 +567,33 @@ describe("executeTask — action type dispatch", () => {
     expect(content.message).toBe("hello world");
   });
 
+  test("agent-message with replyTo: sets channel to telegram and senderId to replyTo", async () => {
+    const task = makeAgentMessageTask({
+      action: { type: "agent-message", agent: "coder", message: "check in", replyTo: "987654321" },
+    });
+
+    await executeTask(task, queueDir);
+
+    const files = require("fs").readdirSync(incomingDir);
+    const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
+    expect(content.channel).toBe("telegram");
+    expect(content.senderId).toBe("987654321");
+    expect(content.agentId).toBe("coder");
+  });
+
+  test("agent-message without replyTo: sets channel to internal and senderId to scheduler", async () => {
+    const task = makeAgentMessageTask({
+      action: { type: "agent-message", agent: "coder", message: "no reply" },
+    });
+
+    await executeTask(task, queueDir);
+
+    const files = require("fs").readdirSync(incomingDir);
+    const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
+    expect(content.channel).toBe("internal");
+    expect(content.senderId).toBe("scheduler");
+  });
+
   // --- heartbeat ---
 
   test("heartbeat: returns success and writes file to incoming queue", async () => {
@@ -611,22 +619,6 @@ describe("executeTask — action type dispatch", () => {
     const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
     expect(content.agentId).toBe("hearagent");
     expect(content.channel).toBe("internal");
-  });
-
-  // --- cleanup ---
-
-  test("cleanup: returns success (simplified, no cleanupType required)", async () => {
-    const task = makeCleanupTask();
-    const result = await executeTask(task, queueDir);
-    expect(result.success).toBe(true);
-  });
-
-  test("cleanup: result has a message property describing what happened", async () => {
-    const task = makeCleanupTask();
-    const result = await executeTask(task, queueDir);
-    if (result.success) {
-      expect(typeof result.message).toBe("string");
-    }
   });
 
   // --- command ---
@@ -780,7 +772,7 @@ describe("processTasksNonBlocking — lastRun updated BEFORE execution", () => {
   });
 
   test("skips disabled tasks, counting them in skipped", async () => {
-    const task = makeHeartbeatTask({ enabled: false, schedule: "* * * * *" });
+    const task = makeAgentMessageTask({ enabled: false, schedule: "* * * * *" });
     writeFileSync(join(tasksDir, "disabled.yaml"), YAML.stringify(task));
 
     const now = new Date("2026-02-17T10:00:00Z");
@@ -844,7 +836,7 @@ describe("processTasksNonBlocking — lastRun updated BEFORE execution", () => {
   });
 
   test("returns counts: { executed, skipped, errors }", async () => {
-    const task = makeHeartbeatTask({ schedule: "* * * * *" });
+    const task = makeAgentMessageTask({ schedule: "* * * * *" });
     writeFileSync(join(tasksDir, "task.yaml"), YAML.stringify(task));
 
     const now = new Date("2026-02-17T10:00:00Z");

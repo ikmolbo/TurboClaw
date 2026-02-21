@@ -158,6 +158,13 @@ describe("addSchedule(tasksDir, args) — non-interactive mode", () => {
 
     expect(content.action.condition).toBeUndefined();
   });
+
+  it("works when config is undefined (no regression)", async () => {
+    await addSchedule(tasksDir, nonInteractiveArgs, undefined);
+
+    const files = readdirSync(tasksDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+    expect(files.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // ----------------------------------------------------------------------------

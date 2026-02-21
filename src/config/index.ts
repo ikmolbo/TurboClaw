@@ -74,6 +74,7 @@ export const ConfigSchema = z
           telegram: z
             .object({
               bot_token: z.string(),
+              chat_id: z.number().optional(),
             })
             .optional(),
         })

@@ -869,6 +869,310 @@ describe("handleMessage() — passes config object to executor", () => {
   });
 });
 
+// ============================================================================
+// 12. handleMessage — HEARTBEAT_OK filtering
+// ============================================================================
+
+describe("handleMessage() — HEARTBEAT_OK filtering", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("heartbeat-filter");
+    executePromptStreamingMock.mockClear();
+    telegramStreamerInstances = [];
+    lastStreamingCallbacks = null;
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test("skips streamer.finalize() when output is HEARTBEAT_OK", async () => {
+    let capturedCallbacks: any = null;
+    executePromptStreamingMock.mockImplementationOnce(
+      (_workDir: string, _message: string, callbacks: any, _options: any) => {
+        capturedCallbacks = callbacks;
+        return { cancel: mock(() => {}) };
+      }
+    );
+
+    const config = makeTelegramConfig("agent1");
+    const chatId = config.agents["agent1"].telegram.chat_id;
+    const message = makeIncomingMessage({
+      agentId: "agent1",
+      channel: "telegram",
+      senderId: String(chatId),
+    });
+
+    const handlerPromise = handleMessage(message, config, { queueDir: tmpDir });
+    await new Promise((r) => setImmediate(r));
+
+    // Simulate agent returning HEARTBEAT_OK
+    capturedCallbacks.onComplete({ success: true, output: "HEARTBEAT_OK", exitCode: 0 });
+    await handlerPromise;
+
+    const streamer = telegramStreamerInstances[0];
+    expect(streamer).toBeDefined();
+    // finalize should NOT have been called
+    expect(streamer.finalizeCalls.length).toBe(0);
+  });
+
+  test("skips streamer.finalize() when output is HEARTBEAT_OK with surrounding whitespace", async () => {
+    let capturedCallbacks: any = null;
+    executePromptStreamingMock.mockImplementationOnce(
+      (_workDir: string, _message: string, callbacks: any, _options: any) => {
+        capturedCallbacks = callbacks;
+        return { cancel: mock(() => {}) };
+      }
+    );
+
+    const config = makeTelegramConfig("agent1");
+    const chatId = config.agents["agent1"].telegram.chat_id;
+    const message = makeIncomingMessage({
+      agentId: "agent1",
+      channel: "telegram",
+      senderId: String(chatId),
+    });
+
+    const handlerPromise = handleMessage(message, config, { queueDir: tmpDir });
+    await new Promise((r) => setImmediate(r));
+
+    capturedCallbacks.onComplete({ success: true, output: "  HEARTBEAT_OK\n ", exitCode: 0 });
+    await handlerPromise;
+
+    const streamer = telegramStreamerInstances[0];
+    expect(streamer.finalizeCalls.length).toBe(0);
+  });
+
+  test("calls streamer.finalize() when output is NOT HEARTBEAT_OK", async () => {
+    let capturedCallbacks: any = null;
+    executePromptStreamingMock.mockImplementationOnce(
+      (_workDir: string, _message: string, callbacks: any, _options: any) => {
+        capturedCallbacks = callbacks;
+        return { cancel: mock(() => {}) };
+      }
+    );
+
+    const config = makeTelegramConfig("agent1");
+    const chatId = config.agents["agent1"].telegram.chat_id;
+    const message = makeIncomingMessage({
+      agentId: "agent1",
+      channel: "telegram",
+      senderId: String(chatId),
+    });
+
+    const handlerPromise = handleMessage(message, config, { queueDir: tmpDir });
+    await new Promise((r) => setImmediate(r));
+
+    capturedCallbacks.onComplete({ success: true, output: "Something needs attention!", exitCode: 0 });
+    await handlerPromise;
+
+    const streamer = telegramStreamerInstances[0];
+    expect(streamer.finalizeCalls).toContain("Something needs attention!");
+  });
+
+  test("does not filter HEARTBEAT_OK on non-telegram channel (no streamer)", async () => {
+    const config = makeInternalConfig("agent1");
+    const message = makeIncomingMessage({ agentId: "agent1", channel: "internal" });
+
+    // Default mock auto-completes with "Hello from agent" — just verify no crash
+    await expect(handleMessage(message, config, { queueDir: tmpDir })).resolves.not.toThrow();
+    expect(telegramStreamerInstances.length).toBe(0);
+  });
+});
+
+// ============================================================================
+// 13. Heartbeat generation — queuing and processing heartbeat messages
+// ============================================================================
+
+describe("Heartbeat generation — heartbeat fires and is processed by daemon", () => {
+  let tmpDir: string;
+  let queueDir: string;
+  let daemonPromise: Promise<void> | null = null;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("heartbeat-gen");
+    queueDir = path.join(tmpDir, "queue");
+    fs.mkdirSync(path.join(queueDir, "incoming"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "outgoing"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "errors"), { recursive: true });
+    executePromptStreamingMock.mockClear();
+    // Make executor return HEARTBEAT_OK so finalize is skipped (no bot API calls)
+    executePromptStreamingMock.mockImplementation(
+      (workDir: string, message: string, callbacks: any, options: any) => {
+        lastStreamingWorkDir = workDir;
+        lastStreamingMessage = message;
+        lastStreamingCallbacks = callbacks;
+        lastStreamingOptions = options;
+        setImmediate(() => {
+          callbacks.onChunk("HEARTBEAT_OK");
+          callbacks.onComplete({ success: true, output: "HEARTBEAT_OK", exitCode: 0 });
+        });
+        return fakeHandle;
+      }
+    );
+  });
+
+  afterEach(async () => {
+    // Ensure daemon is stopped before cleanup
+    if (daemonPromise) {
+      process.emit("SIGTERM" as any);
+      await Promise.race([daemonPromise, Bun.sleep(3000)]);
+      daemonPromise = null;
+    }
+    // Restore the default mock implementation
+    executePromptStreamingMock.mockImplementation(
+      (workDir: string, message: string, callbacks: any, options: any) => {
+        lastStreamingWorkDir = workDir;
+        lastStreamingMessage = message;
+        lastStreamingCallbacks = callbacks;
+        lastStreamingOptions = options;
+        setImmediate(() => {
+          callbacks.onChunk("Hello from agent");
+          callbacks.onComplete({ success: true, output: "Hello from agent", exitCode: 0 });
+        });
+        return fakeHandle;
+      }
+    );
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test("heartbeat fires and executor receives HEARTBEAT.md content", async () => {
+    const workDir = path.join(tmpDir, "agent-work");
+    fs.mkdirSync(workDir, { recursive: true });
+    fs.writeFileSync(path.join(workDir, "HEARTBEAT.md"), "Check if everything is running smoothly.");
+
+    const configPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      [
+        "workspace:",
+        "  path: /tmp/ws",
+        "providers: {}",
+        "agents:",
+        "  heartbeat-agent:",
+        "    name: Heartbeat Agent",
+        "    provider: anthropic",
+        "    model: sonnet",
+        `    working_directory: ${workDir}`,
+        "    heartbeat_interval: 1",
+        "    telegram:",
+        '      bot_token: "123456:ABC-fake"',
+        "      chat_id: 999888777",
+      ].join("\n")
+    );
+
+    daemonPromise = runDaemon({
+      configPath,
+      queueDir,
+      tasksDir: path.join(tmpDir, "tasks"),
+      pidFile: path.join(tmpDir, "daemon.pid"),
+      baseDir: tmpDir,
+    });
+
+    // Wait for heartbeat to fire and be processed (interval=1s, poll=1s)
+    await Bun.sleep(4000);
+
+    // Stop daemon
+    process.emit("SIGTERM" as any);
+    await Promise.race([daemonPromise, Bun.sleep(2000)]);
+    daemonPromise = null;
+
+    // Verify executor was called with HEARTBEAT.md content
+    const heartbeatCall = executePromptStreamingMock.mock.calls.find(
+      (call: any[]) => typeof call[1] === "string" && call[1].includes("Check if everything is running smoothly")
+    );
+    expect(heartbeatCall).toBeDefined();
+    expect(heartbeatCall![0]).toBe(workDir);
+  });
+
+  test("heartbeat skips agents without chat_id", async () => {
+    const workDir = path.join(tmpDir, "agent-work-no-chatid");
+    fs.mkdirSync(workDir, { recursive: true });
+    fs.writeFileSync(path.join(workDir, "HEARTBEAT.md"), "Check status.");
+
+    const configPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      [
+        "workspace:",
+        "  path: /tmp/ws",
+        "providers: {}",
+        "agents:",
+        "  no-chatid-agent:",
+        "    name: No ChatId Agent",
+        "    provider: anthropic",
+        "    model: sonnet",
+        `    working_directory: ${workDir}`,
+        "    heartbeat_interval: 1",
+        "    telegram:",
+        '      bot_token: "123456:ABC-fake"',
+      ].join("\n")
+    );
+
+    daemonPromise = runDaemon({
+      configPath,
+      queueDir,
+      tasksDir: path.join(tmpDir, "tasks"),
+      pidFile: path.join(tmpDir, "daemon.pid"),
+      baseDir: tmpDir,
+    });
+
+    await Bun.sleep(2500);
+    process.emit("SIGTERM" as any);
+    await Promise.race([daemonPromise, Bun.sleep(2000)]);
+    daemonPromise = null;
+
+    // Executor should NOT have been called with heartbeat content
+    const heartbeatCall = executePromptStreamingMock.mock.calls.find(
+      (call: any[]) => typeof call[1] === "string" && call[1].includes("Check status")
+    );
+    expect(heartbeatCall).toBeUndefined();
+  });
+
+  test("heartbeat skips when HEARTBEAT.md has only comments", async () => {
+    const workDir = path.join(tmpDir, "agent-work-comments");
+    fs.mkdirSync(workDir, { recursive: true });
+    fs.writeFileSync(path.join(workDir, "HEARTBEAT.md"), "# This is a comment\n# Another comment\n");
+
+    const configPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      [
+        "workspace:",
+        "  path: /tmp/ws",
+        "providers: {}",
+        "agents:",
+        "  comments-agent:",
+        "    name: Comments Agent",
+        "    provider: anthropic",
+        "    model: sonnet",
+        `    working_directory: ${workDir}`,
+        "    heartbeat_interval: 1",
+        "    telegram:",
+        '      bot_token: "123456:ABC-fake"',
+        "      chat_id: 111222333",
+      ].join("\n")
+    );
+
+    daemonPromise = runDaemon({
+      configPath,
+      queueDir,
+      tasksDir: path.join(tmpDir, "tasks"),
+      pidFile: path.join(tmpDir, "daemon.pid"),
+      baseDir: tmpDir,
+    });
+
+    await Bun.sleep(2500);
+    process.emit("SIGTERM" as any);
+    await Promise.race([daemonPromise, Bun.sleep(2000)]);
+    daemonPromise = null;
+
+    // Executor should NOT have been called
+    expect(executePromptStreamingMock).not.toHaveBeenCalled();
+  });
+});
+
 // Restore all module mocks after this file so they don't leak into other test files
 afterAll(() => {
   mock.restore();

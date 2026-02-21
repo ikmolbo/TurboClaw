@@ -374,6 +374,11 @@ export class TelegramStreamer {
         await this.bot.api.sendMessage(this.chatId, chunk);
       }
     }
+
+    logger.info("Sent reply", {
+      agent: this.agentId,
+      text: fullOutput.substring(0, 50),
+    });
   }
 }
 

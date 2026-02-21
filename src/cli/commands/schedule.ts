@@ -3,6 +3,7 @@ import * as path from "path";
 import * as YAML from "yaml";
 import { select, text, confirm, intro, outro, cancel } from "@clack/prompts";
 import type { Task } from "../../scheduler/index";
+import type { Config } from "../../config/index";
 import { validateTask, getNextRunTime, saveTask } from "../../scheduler/index";
 import chalk from "chalk";
 
@@ -103,7 +104,7 @@ export async function listSchedules(tasksDir: string = DEFAULT_TASKS_DIR): Promi
  * If args contains --name, run in non-interactive mode.
  * Otherwise, run interactive prompts.
  */
-export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: string[]): Promise<void> {
+export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: string[], config?: Config): Promise<void> {
   // Ensure tasks directory exists
   if (!fs.existsSync(tasksDir)) {
     fs.mkdirSync(tasksDir, { recursive: true });
@@ -122,6 +123,7 @@ export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: s
         ...(parsed.message && { message: parsed.message }),
         ...(parsed.command && { command: parsed.command }),
         ...(parsed.condition && { condition: parsed.condition }),
+        ...(parsed.replyTo && { replyTo: parsed.replyTo }),
       },
       enabled: true,
     };
@@ -172,8 +174,6 @@ export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: s
     message: "Task action type:",
     options: [
       { value: "agent-message", label: "Agent Message" },
-      { value: "heartbeat", label: "Heartbeat" },
-      { value: "cleanup", label: "Cleanup" },
       { value: "command", label: "Shell Command" },
     ],
   })) as Task["action"]["type"];
@@ -214,25 +214,42 @@ export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: s
       return;
     }
 
-    action = { type: "agent-message", agent, message };
-  } else if (actionType === "heartbeat") {
-    const agent = await text({
-      message: "Agent ID:",
-      placeholder: "coder",
-      validate: value => {
-        if (!value) return "Agent ID is required";
-        return undefined;
-      },
-    });
+    let replyTo: string | symbol | undefined;
+    const allowedUsers = config?.allowed_users;
 
-    if (typeof agent === "symbol") {
-      cancel("Cancelled");
-      return;
+    if (allowedUsers && allowedUsers.length > 0) {
+      const selected = await select({
+        message: "Reply-to chat ID (Telegram chat ID to receive replies):",
+        options: [
+          ...allowedUsers.map(id => ({ value: String(id), label: String(id) })),
+          { value: "", label: "None" },
+        ],
+      });
+
+      if (typeof selected === "symbol") {
+        cancel("Cancelled");
+        return;
+      }
+
+      replyTo = selected || undefined;
+    } else {
+      replyTo = await text({
+        message: "Reply-to chat ID (Telegram chat ID to receive replies):",
+        placeholder: "123456789",
+      });
+
+      if (typeof replyTo === "symbol") {
+        cancel("Cancelled");
+        return;
+      }
     }
 
-    action = { type: "heartbeat", agent };
-  } else if (actionType === "cleanup") {
-    action = { type: "cleanup" };
+    action = {
+      type: "agent-message",
+      agent,
+      message,
+      ...(replyTo && { replyTo }),
+    };
   } else if (actionType === "command") {
     const command = await text({
       message: "Shell command to run:",
@@ -301,7 +318,7 @@ export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: s
   let filename = name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".yaml";
 
   // Prepend agent ID for agent-specific tasks
-  if ((action.type === "agent-message" || action.type === "heartbeat") && action.agent) {
+  if (action.type === "agent-message" && action.agent) {
     filename = `${action.agent}-${filename}`;
   }
 

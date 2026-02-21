@@ -20,11 +20,12 @@ const logger = createLogger("scheduler");
 // ============================================================================
 
 const TaskActionSchema = z.object({
-  type: z.enum(["agent-message", "heartbeat", "cleanup", "command"]),
+  type: z.enum(["agent-message", "heartbeat", "command"]),
   agent: z.string().optional(),
   message: z.string().optional(),
   command: z.string().optional(),
   condition: z.string().optional(),
+  replyTo: z.string().optional(),
 });
 
 const TaskSchema = z.object({
@@ -211,11 +212,12 @@ export async function executeTask(
 
   switch (action.type) {
     case "agent-message": {
+      const hasReplyTo = !!action.replyTo;
       await writeIncoming(
         {
-          channel: "internal",
+          channel: hasReplyTo ? "telegram" : "internal",
           sender: "scheduler",
-          senderId: "scheduler",
+          senderId: action.replyTo ?? "scheduler",
           agentId: action.agent!,
           message: action.message!,
           timestamp: Date.now(),
@@ -227,11 +229,12 @@ export async function executeTask(
     }
 
     case "heartbeat": {
+      const hasReplyTo = !!action.replyTo;
       await writeIncoming(
         {
-          channel: "internal",
+          channel: hasReplyTo ? "telegram" : "internal",
           sender: "heartbeat",
-          senderId: "heartbeat",
+          senderId: action.replyTo ?? "heartbeat",
           agentId: action.agent!,
           message: "🫀 Automated heartbeat check",
           timestamp: Date.now(),
@@ -240,23 +243,6 @@ export async function executeTask(
         queueDir
       );
       return { success: true, message: "Heartbeat queued" };
-    }
-
-    case "cleanup": {
-      if (action.command) {
-        const proc = Bun.spawn(["sh", "-c", action.command], {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const exitCode = await proc.exited;
-        if (exitCode !== 0) {
-          const stderr = await new Response(proc.stderr).text();
-          return { success: false, error: `Cleanup command failed (exit ${exitCode}): ${stderr}` };
-        }
-        const stdout = await new Response(proc.stdout).text();
-        return { success: true, message: `Cleanup completed: ${stdout.trim()}` };
-      }
-      return { success: true, message: "Cleanup completed" };
     }
 
     case "command": {

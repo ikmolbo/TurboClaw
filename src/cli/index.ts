@@ -158,7 +158,11 @@ async function executeCommand(parsed: ParsedArgs) {
         await listSchedules(tasksDir);
       } else if (subcommand === "add") {
         const { addSchedule } = await import("./commands/schedule");
-        await addSchedule(tasksDir, subArgs);
+        const { loadConfig } = await import("../config/index");
+        const configPath = path.join(os.homedir(), ".turboclaw", "config.yaml");
+        let config;
+        try { config = await loadConfig(configPath); } catch { config = undefined; }
+        await addSchedule(tasksDir, subArgs, config);
       } else if (subcommand === "remove") {
         const taskName = parsed.args[1];
         if (!taskName) {

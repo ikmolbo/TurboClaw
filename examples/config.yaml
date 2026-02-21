@@ -23,6 +23,8 @@ agents:
     memory_mode: isolated       # shared or isolated
     telegram:
       bot_token: "123456:ABC..."
+      chat_id: 123456789          # user ID or group ID where heartbeat replies are sent
+                                  # must be in allowed_users if that list is set
 
 # Audio transcription (optional)
 # Credentials are pulled from the named provider in the providers section above.
