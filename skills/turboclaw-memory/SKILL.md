@@ -214,8 +214,8 @@ Response: "✓ Logged to memory/2026-02-16.md"
 
 When you create a new agent with the memory skill enabled, TurboClaw automatically offers to create two memory management schedules:
 
-1. **Daily consolidation** (2am): `memory --consolidate`
-2. **Regular context clearing** (every 6 hours): `memory --clear-context`
+1. **Daily consolidation** (2am): `Use the turboclaw-memory skill with the --consolidate flag`
+2. **Regular context clearing** (every 6 hours): `Use the turboclaw-memory skill with the --clear-context flag`
 
 These are created as scheduled tasks in `~/.turboclaw/tasks/`:
 - `{agent-id}-memory-consolidation.yaml`
@@ -240,13 +240,13 @@ turboclaw schedule add
 # Schedule: 0 2 * * *
 # Action type: agent-message
 # Agent ID: coder
-# Message: memory --consolidate
+# Message: Use the turboclaw-memory skill with the --consolidate flag
 ```
 
 **Manual consolidation:**
 ```
 User: "Consolidate the week's memory and reset"
-You: [Use memory --consolidate]
+You: [Use the turboclaw-memory skill with --consolidate]
 Response: "✓ Consolidated 7 days to MEMORY.md and reset conversation"
 ```
 
@@ -319,7 +319,7 @@ When you install this skill during agent creation, TurboClaw offers to set up au
    - Resets conversation to keep context fresh
 
 2. **Context clearing task** - Runs every 6 hours
-   - Sends `memory --clear-context` command
+   - Sends `turboclaw-memory --clear-context` command
    - Prevents conversation context from growing too large
    - Works in conjunction with consolidation to maintain manageable memory
 

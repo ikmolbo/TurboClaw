@@ -202,7 +202,7 @@ export async function addSchedule(tasksDir: string = DEFAULT_TASKS_DIR, args?: s
 
     const message = await text({
       message: "Message to send:",
-      placeholder: "memory --consolidate",
+      placeholder: "Use the turboclaw-memory skill with the --consolidate flag",
       validate: value => {
         if (!value) return "Message is required";
         return undefined;

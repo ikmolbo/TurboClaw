@@ -558,7 +558,7 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
                 action: {
                   type: "agent-message",
                   agent: id as string,
-                  message: "memory --consolidate",
+                  message: "Use the turboclaw-memory skill with the --consolidate flag to consolidate daily logs into long-term memory",
                 },
                 enabled: true,
               };
@@ -590,7 +590,7 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
             action: {
               type: "agent-message",
               agent: id as string,
-              message: "memory --clear-context",
+              message: "Use the turboclaw-memory skill with the --clear-context flag to clear conversation context",
             },
             enabled: true,
           };
