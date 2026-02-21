@@ -443,14 +443,16 @@ export async function startTelegramBot(
           continue;
         }
 
-        const flagPath = path.join(agent.working_directory, ".reset_flag");
+        const resetDir = path.join(os.homedir(), ".turboclaw", "reset");
+        const signalFile = path.join(resetDir, targetAgentId);
         try {
-          await Bun.write(flagPath, "reset");
+          fs.mkdirSync(resetDir, { recursive: true });
+          fs.writeFileSync(signalFile, "reset");
           results.push(`Reset @${targetAgentId} (${agent.name})`);
-          logger.info("Reset flag created", { agentId: targetAgentId, flagPath });
+          logger.info("Reset signal written", { agentId: targetAgentId, signalFile });
         } catch (error) {
           results.push(`Failed to reset @${targetAgentId}: ${error}`);
-          logger.error("Failed to create reset flag", { agentId: targetAgentId, error });
+          logger.error("Failed to write reset signal", { agentId: targetAgentId, error });
         }
       }
 
