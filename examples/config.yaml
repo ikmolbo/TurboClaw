@@ -4,6 +4,10 @@
 workspace:
   path: ~/.turboclaw/workspaces
 
+# Additional directories to scan for skills (besides ~/.turboclaw/skills/)
+# skill_directories:
+#   - ~/projects/my-custom-skills
+
 # Telegram user ID whitelist (empty or omitted = allow all)
 # allowed_users:
 #   - 123456789

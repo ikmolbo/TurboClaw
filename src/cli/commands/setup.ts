@@ -7,17 +7,21 @@ import * as prompts from "@clack/prompts";
 /**
  * Build a fully commented config for first-time installs so all options are obvious.
  */
-function buildFreshConfig(workspacePath: string, allowedUsers?: number[]): string {
+function buildFreshConfig(workspacePath: string, allowedUsers?: number[], skillDirectories?: string[]): string {
   const allowedUsersSection = allowedUsers && allowedUsers.length > 0
     ? `\n# Allowed Telegram user IDs (only these users can message the bots)\nallowed_users:\n${allowedUsers.map((id) => `  - ${id}`).join("\n")}\n`
     : `\n# Allowed Telegram user IDs — leave empty or omit to allow all users\n# allowed_users:\n#   - 123456789\n`;
+
+  const skillDirsSection = skillDirectories && skillDirectories.length > 0
+    ? `\n# Additional directories to scan for skills (besides ~/.turboclaw/skills/)\nskill_directories:\n${skillDirectories.map((d) => `  - ${d}`).join("\n")}\n`
+    : `\n# Additional directories to scan for skills (besides ~/.turboclaw/skills/)\n# skill_directories:\n#   - ~/projects/my-custom-skills\n`;
 
   return `# TurboClaw Configuration
 # Run 'turboclaw setup' at any time to update these settings.
 
 workspace:
   path: ${workspacePath}
-${allowedUsersSection}
+${allowedUsersSection}${skillDirsSection}
 # ── Providers ────────────────────────────────────────────────────────────────
 # Define API providers here. Each agent references a provider by name.
 # Credentials can also be set via environment variables (e.g. ANTHROPIC_API_KEY).
@@ -147,6 +151,24 @@ export async function setupCommand(options: SetupOptions = {}): Promise<() => vo
     }
   }
 
+  // Prompt for additional skill directories
+  const existingSkillDirs = (existingConfig.skill_directories as string[] | undefined) ?? [];
+  const skillDirsInput = await prompts.text({
+    message: "Additional skill directories (comma-separated, leave blank to skip)",
+    placeholder: "e.g., ~/projects/my-skills, ~/other-skills",
+    initialValue: existingSkillDirs.length > 0 ? existingSkillDirs.join(", ") : "",
+  });
+
+  if (prompts.isCancel(skillDirsInput)) {
+    prompts.cancel("Setup cancelled");
+    return noop;
+  }
+
+  const skillDirectories = (skillDirsInput as string)
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
   // Ensure parent directory exists
   const dir = dirname(configPath);
   if (!existsSync(dir)) {
@@ -171,12 +193,17 @@ export async function setupCommand(options: SetupOptions = {}): Promise<() => vo
 
   if (isFreshInstall) {
     // First run: write a fully commented template so all options are obvious
-    configContent = buildFreshConfig(rawWorkspacePath, allowedUsers);
+    configContent = buildFreshConfig(rawWorkspacePath, allowedUsers, skillDirectories);
   } else {
     // Existing config: update only the fields we collected, preserve the rest
     existingConfig.workspace = { path: rawWorkspacePath };
     if (allowedUsers && allowedUsers.length > 0) {
       existingConfig.allowed_users = allowedUsers;
+    }
+    if (skillDirectories.length > 0) {
+      existingConfig.skill_directories = skillDirectories;
+    } else {
+      delete existingConfig.skill_directories;
     }
     if (!existingConfig.providers) {
       existingConfig.providers = { anthropic: {} };

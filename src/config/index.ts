@@ -50,6 +50,10 @@ export const ConfigSchema = z
       path: z.string(),
     }),
     allowed_users: z.array(z.number()).optional(),
+    skill_directories: z
+      .array(z.string())
+      .optional()
+      .transform((val) => val ?? []),
     providers: z
       .record(
         z.string(),
@@ -169,6 +173,7 @@ export async function loadConfig(configPath: string): Promise<Config> {
 
   // Expand paths and model shorthands
   config.workspace.path = expandPath(config.workspace.path);
+  config.skill_directories = config.skill_directories.map(expandPath);
 
   for (const agentId of Object.keys(config.agents)) {
     const agent = config.agents[agentId];

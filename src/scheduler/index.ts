@@ -164,7 +164,10 @@ export async function loadTaskFiles(
   for (const filename of yamlFiles) {
     const filepath = path.join(tasksDir, filename);
     try {
-      const raw = await Bun.file(filepath).text();
+      let raw = await Bun.file(filepath).text();
+      // Bare cron expressions starting with * are invalid YAML (alias syntax).
+      // Auto-quote them so hand-edited task files don't break.
+      raw = raw.replace(/^(\s*schedule:\s*)(\*.*)$/m, '$1"$2"');
       const parsed = YAML.parse(raw);
       const validation = validateTask(parsed);
       if (validation.success) {

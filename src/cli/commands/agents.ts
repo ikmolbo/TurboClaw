@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, cpSync, symlinkSync, readdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import * as yaml from "yaml";
@@ -36,8 +36,95 @@ export interface CreateAgentData {
   telegram?: {
     bot_token: string;
   };
+  skill_install_mode?: "copy" | "symlink";
 }
 
+/**
+ * Install a skill into an agent's .claude/skills/ directory.
+ *
+ * @param skillPath  - absolute path to the source skill directory
+ * @param destDir    - absolute path to the agent's .claude/skills/ directory
+ * @param skillName  - directory name for the installed skill
+ * @param mode       - "copy" for an independent copy, "symlink" so updates propagate
+ */
+export function installSkill(
+  skillPath: string,
+  destDir: string,
+  skillName: string,
+  mode: "copy" | "symlink"
+): void {
+  const dest = join(destDir, skillName);
+  if (mode === "symlink") {
+    symlinkSync(skillPath, dest);
+  } else {
+    cpSync(skillPath, dest, { recursive: true });
+  }
+}
+
+/**
+ * Scan ~/.turboclaw/skills/ plus any config.skill_directories for available
+ * non-bundled skill folders.  Returns prompt-ready options and a resolver
+ * that maps a selected value back to { name, path }.
+ *
+ * @param config       - loaded Config (for skill_directories)
+ * @param exclude      - set of skill names to exclude (e.g. already installed)
+ */
+function discoverSkills(
+  config: Config,
+  exclude: Set<string> = new Set()
+): {
+  options: Array<{ value: string; label: string; hint: string }>;
+  resolve: (value: string) => { name: string; path: string };
+} {
+  const defaultSkillsPath = join(process.env.HOME || os.homedir(), ".turboclaw", "skills");
+  const allDirs = [defaultSkillsPath, ...config.skill_directories];
+
+  // Scan a single directory for skill sub-folders
+  const scanDir = (dir: string): string[] => {
+    if (!existsSync(dir)) return [];
+    try {
+      return readdirSync(dir)
+        .filter((item) => {
+          try {
+            return statSync(join(dir, item)).isDirectory()
+              && !item.startsWith("turboclaw-")
+              && !exclude.has(item);
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  };
+
+  // Build deduplicated option list; first occurrence of a name wins
+  const seen = new Set<string>();
+  const options: Array<{ value: string; label: string; hint: string }> = [];
+  // Map encoded value → { name, path }
+  const valueMap = new Map<string, { name: string; path: string }>();
+
+  for (const dir of allDirs) {
+    for (const name of scanDir(dir)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const encoded = dir === defaultSkillsPath ? name : `__dir__${dir}__${name}`;
+      options.push({
+        value: encoded,
+        label: name,
+        hint: dir === defaultSkillsPath ? "~/.turboclaw/skills" : dir,
+      });
+      valueMap.set(encoded, { name, path: join(dir, name) });
+    }
+  }
+
+  const resolve = (value: string): { name: string; path: string } => {
+    return valueMap.get(value) ?? { name: value, path: join(defaultSkillsPath, value) };
+  };
+
+  return { options, resolve };
+}
 
 /**
  * List all agents from config
@@ -154,9 +241,8 @@ export async function createAgent(
   }
 
   // Install bundled TurboClaw skills (always installed)
+  const skillMode = agentData.skill_install_mode ?? "copy";
   try {
-    const { readdirSync, cpSync, existsSync } = await import("fs");
-
     // Get TurboClaw repo root (go up from src/cli/commands to root)
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
@@ -170,16 +256,14 @@ export async function createAgent(
 
       for (const skillName of bundledSkills) {
         const sourcePath = join(bundledSkillsPath, skillName);
-        const destPath = join(skillsDir, skillName);
-
-        // Copy the skill directory
-        cpSync(sourcePath, destPath, { recursive: true });
-        logger.debug("Installed bundled skill", { skill: skillName, agent: agentData.id });
+        installSkill(sourcePath, skillsDir, skillName, skillMode);
+        logger.debug("Installed bundled skill", { skill: skillName, agent: agentData.id, mode: skillMode });
       }
 
       logger.info("Installed bundled TurboClaw skills", {
         count: bundledSkills.length,
-        skills: bundledSkills
+        skills: bundledSkills,
+        mode: skillMode,
       });
     }
   } catch (error) {
@@ -377,93 +461,42 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
     initialValue: false,
   });
 
-  let selectedSkills: string[] | undefined;
   let customSkillsToInstall: Array<{ name: string; path: string }> = [];
 
   if (addSkills && !prompts.isCancel(addSkills)) {
-    const { readdirSync, statSync, existsSync } = await import("fs");
+    const { options: skillOptions, resolve: resolveSkill } = discoverSkills(config);
 
-    const defaultSkillsPath = join(process.env.HOME || os.homedir(), ".turboclaw", "skills");
-
-    // Ask for an additional custom skills directory
-    const additionalPathInput = await prompts.text({
-      message: "Additional skills directory (leave blank to skip)",
-      placeholder: "e.g., ~/projects/my-skills",
-    });
-
-    if (prompts.isCancel(additionalPathInput)) {
-      prompts.cancel("Agent creation cancelled");
-      process.exit(0);
-    }
-
-    const additionalPath = (additionalPathInput as string).trim()
-      ? expandPath((additionalPathInput as string).trim())
-      : null;
-
-    // Scan a directory for non-bundled skill folders
-    const scanDir = (dir: string): string[] => {
-      if (!existsSync(dir)) return [];
-      try {
-        return readdirSync(dir)
-          .filter((item) => {
-            try {
-              return statSync(join(dir, item)).isDirectory() && !item.startsWith("turboclaw-");
-            } catch {
-              return false;
-            }
-          })
-          .sort((a, b) => a.localeCompare(b));
-      } catch {
-        return [];
-      }
-    };
-
-    const defaultSkills = scanDir(defaultSkillsPath);
-    const additionalSkillNames = additionalPath ? scanDir(additionalPath) : [];
-
-    // Build combined option list — deduplicated, custom-path skills show their source as a hint
-    const allOptions = [
-      ...defaultSkills.map((name) => ({
-        value: name,
-        label: name,
-        hint: "~/.turboclaw/skills",
-      })),
-      ...additionalSkillNames
-        .filter((name) => !defaultSkills.includes(name))
-        .map((name) => ({
-          value: `__custom__${name}`,
-          label: name,
-          hint: additionalPath!,
-        })),
-    ];
-
-    if (allOptions.length > 0) {
+    if (skillOptions.length > 0) {
       const skillsInput = await prompts.multiselect({
         message: "Select additional skills (space to select, enter to confirm)",
-        options: allOptions,
+        options: skillOptions,
         initialValues: [],
       });
 
       if (!prompts.isCancel(skillsInput)) {
         const selected = skillsInput as string[];
-        // Default-path skills are installed directly after agent creation
-        selectedSkills = selected.filter((s) => !s.startsWith("__custom__"));
-        // Custom-path skills are installed directly after agent creation
-        customSkillsToInstall = selected
-          .filter((s) => s.startsWith("__custom__"))
-          .map((s) => {
-            const name = s.replace("__custom__", "");
-            return { name, path: join(additionalPath!, name) };
-          });
+        customSkillsToInstall = selected.map(resolveSkill);
       }
     } else {
-      const pathsMsg = [defaultSkillsPath, additionalPath].filter(Boolean).join("\n  ");
       prompts.note(
-        `No additional skills found in:\n  ${pathsMsg}\nBundled TurboClaw skills will be installed automatically.`,
+        "No additional skills found.\nBundled TurboClaw skills will be installed automatically.",
         "Skills"
       );
-      selectedSkills = [];
     }
+  }
+
+  // Ask how skills should be installed
+  const skillInstallMode = await prompts.select({
+    message: "How should skills be installed?",
+    options: [
+      { value: "copy", label: "Copy (independent copy, won't receive upstream updates)" },
+      { value: "symlink", label: "Symlink (updates to source skills propagate automatically)" },
+    ],
+  });
+
+  if (prompts.isCancel(skillInstallMode)) {
+    prompts.cancel("Agent creation cancelled");
+    process.exit(0);
   }
 
   // Create agent (suppress verbose logger output during interactive UI)
@@ -482,6 +515,7 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
         heartbeat_interval: heartbeatInterval as number | false,
         memory_mode: memoryMode as "shared" | "isolated",
         telegram: telegramConfig,
+        skill_install_mode: skillInstallMode as "copy" | "symlink",
       },
       configPath
     );
@@ -489,25 +523,17 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
     spinner.stop("✅ Agent created successfully!");
     setLogLevel(LogLevel.DEBUG);
 
-    // Install all additional skills directly into the agent's .claude/skills dir
-    const allSkillsToInstall: Array<{ name: string; path: string }> = [
-      ...(selectedSkills ?? []).map((name) => ({
-        name,
-        path: join(process.env.HOME || os.homedir(), ".turboclaw", "skills", name),
-      })),
-      ...customSkillsToInstall,
-    ];
-
-    if (allSkillsToInstall.length > 0) {
-      const { cpSync, existsSync } = await import("fs");
+    // Install additional skills directly into the agent's .claude/skills dir
+    if (customSkillsToInstall.length > 0) {
+      const chosenMode = skillInstallMode as "copy" | "symlink";
       const agentSkillsDir = join(expandPath(workingDir as string), ".claude", "skills");
-      for (const { name: skillName, path: skillPath } of allSkillsToInstall) {
+      for (const { name: skillName, path: skillPath } of customSkillsToInstall) {
         try {
           if (existsSync(skillPath)) {
-            cpSync(skillPath, join(agentSkillsDir, skillName), { recursive: true });
+            installSkill(skillPath, agentSkillsDir, skillName, chosenMode);
           }
         } catch {
-          // Non-fatal — don't abort agent creation for a skill copy failure
+          // Non-fatal — don't abort agent creation for a skill install failure
         }
       }
     }
@@ -523,8 +549,8 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
       `✓ Template files installed`,
       `✓ TurboClaw bundled skills installed`,
     ];
-    if (allSkillsToInstall.length > 0) {
-      summaryLines.push(`✓ Additional skills: ${allSkillsToInstall.map((s) => s.name).join(", ")}`);
+    if (customSkillsToInstall.length > 0) {
+      summaryLines.push(`✓ Additional skills: ${customSkillsToInstall.map((s) => s.name).join(", ")}`);
     }
     prompts.note(summaryLines.join("\n"), "Files created");
 
@@ -753,13 +779,123 @@ export async function agentsCommand(args: string[], config: Config, configPath: 
       break;
     }
 
+    case "install-skill": {
+      let agentId = args[1];
+
+      // If no agent ID provided, show interactive selection
+      if (!agentId) {
+        const agents = listAgents(config);
+
+        if (agents.length === 0) {
+          console.log("No agents configured yet");
+          console.log("\nCreate your first agent with: turboclaw agents add");
+          return;
+        }
+
+        const selected = await prompts.select({
+          message: "Select agent to install skill(s) into",
+          options: agents.map((a) => ({
+            value: a.id,
+            label: `${a.name} (${a.id})`,
+            hint: a.model,
+          })),
+        });
+
+        if (prompts.isCancel(selected)) {
+          prompts.cancel("Cancelled");
+          return;
+        }
+
+        agentId = selected as string;
+      }
+
+      const agent = getAgent(agentId, config);
+      if (!agent) {
+        console.error(`Agent '${agentId}' not found`);
+        process.exit(1);
+      }
+
+      const agentSkillsDir = join(expandPath(agent.workingDirectory), ".claude", "skills");
+      if (!existsSync(agentSkillsDir)) {
+        mkdirSync(agentSkillsDir, { recursive: true });
+      }
+
+      // Discover already-installed skills
+      const installedSkills = new Set(
+        readdirSync(agentSkillsDir, { withFileTypes: true })
+          .filter(d => d.isDirectory() || d.isSymbolicLink())
+          .map(d => d.name)
+      );
+
+      const { options: skillOptions, resolve: resolveSkill } = discoverSkills(config, installedSkills);
+
+      if (skillOptions.length === 0) {
+        console.log("All available skills are already installed.");
+        return;
+      }
+
+      const skillsInput = await prompts.multiselect({
+        message: "Select skill(s) to install (space to select, enter to confirm)",
+        options: skillOptions,
+        initialValues: [],
+      });
+
+      if (prompts.isCancel(skillsInput)) {
+        prompts.cancel("Cancelled");
+        return;
+      }
+
+      const selected = skillsInput as string[];
+      if (selected.length === 0) {
+        console.log("No skills selected.");
+        return;
+      }
+
+      const skillInstallMode = await prompts.select({
+        message: "How should skills be installed?",
+        options: [
+          { value: "copy", label: "Copy (independent copy, won't receive upstream updates)" },
+          { value: "symlink", label: "Symlink (updates to source skills propagate automatically)" },
+        ],
+      });
+
+      if (prompts.isCancel(skillInstallMode)) {
+        prompts.cancel("Cancelled");
+        return;
+      }
+
+      const chosenMode = skillInstallMode as "copy" | "symlink";
+      const installed: string[] = [];
+
+      for (const entry of selected) {
+        const { name: skillName, path: skillPath } = resolveSkill(entry);
+        try {
+          if (existsSync(skillPath)) {
+            installSkill(skillPath, agentSkillsDir, skillName, chosenMode);
+            installed.push(skillName);
+          }
+        } catch (error) {
+          console.error(`Failed to install '${skillName}': ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      if (installed.length > 0) {
+        console.log(`\nInstalled ${installed.length} skill(s) into agent '${agentId}' (${chosenMode}):`);
+        for (const name of installed) {
+          console.log(`  - ${name}`);
+        }
+      }
+      break;
+    }
+
     default: {
-      console.error(`❌ Unknown subcommand: ${subcommand}`);
+      console.error(`Unknown subcommand: ${subcommand}`);
       console.log("\nAvailable commands:");
-      console.log("  turboclaw agents list        - List all agents");
-      console.log("  turboclaw agents add         - Create new agent");
-      console.log("  turboclaw agents show <id>   - Show agent details");
-      console.log("  turboclaw agents remove <id> - Remove agent");
+      console.log("  turboclaw agents list                    - List all agents");
+      console.log("  turboclaw agents add                     - Create new agent");
+      console.log("  turboclaw agents show <id>               - Show agent details");
+      console.log("  turboclaw agents remove <id>             - Remove agent");
+      console.log("  turboclaw agents install-skill [agent-id] - Install skill(s) into an agent");
       process.exit(1);
     }
   }
