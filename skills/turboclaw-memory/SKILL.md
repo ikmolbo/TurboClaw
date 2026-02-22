@@ -90,29 +90,38 @@ When invoked WITH `--consolidate`:
    - Find all `YYYY-MM-DD.md` files
    - Extract key information across all days
 
-2. **Generate consolidated summary**
-   - **Important decisions** with lasting impact
-   - **User preferences** learned over time
-   - **Project context** that persists across days
-   - **Ongoing work** and next steps
-   - Format as clean bullet points (10-15 items max)
+2. **Generate consolidated entries**
+   - Use the **same single-line tagged format** as daily logs
+   - Use your judgement to decide what has lasting value vs what is ephemeral
+   - Deduplicate — merge entries that say the same thing
+   - Drop entries that are no longer relevant (completed one-off tasks, resolved issues, transient status updates)
+   - Keep entries that have lasting value: decisions, preferences, bugs/workarounds, recurring patterns, ongoing projects, domain knowledge
+   - 10-15 entries max per consolidation
+   - Format: `## YYYY-MM-DD [tag] entry text` (use the original date, drop time and @agent-id)
 
 3. **Append to MEMORY.md**
    - File: `memory/MEMORY.md`
-   - Add date range header
-   - Include consolidated summary
+   - Append consolidated entries directly — no prose, no headings, no categories
+   - The file is a flat, searchable log — not a document
    - This becomes your persistent long-term memory
 
-4. **Archive daily logs**
-   - Move `YYYY-MM-DD.md` files to `memory/archive/`
-   - Keeps `memory/` clean for new daily logs
+**Example MEMORY.md after consolidation:**
+```markdown
+# Memory
 
-5. **Reset conversation**
+## 2026-02-16 [decision] Implemented memory skill with dual log/consolidate modes
+## 2026-02-16 [preference] User prefers visible `memory/` folder over hidden `.memory/`
+## 2026-02-18 [bug] `gog gmail drafts update` detaches draft from thread — must always delete + recreate
+## 2026-02-18 [context] Genealogy use case trending — Transkribus is main competitor, customers report we perform better
+## 2026-02-20 [decision] Data stored in EU but passes through local servers if user outside Europe — cannot guarantee EU-only transit
+```
+
+4. **Reset conversation**
    ```bash
    turboclaw reset-context <agent-id>
    ```
 
-6. **Respond to user**
+5. **Respond to user**
    - "✓ Consolidated X days to MEMORY.md and reset conversation"
    - Brief, 1-2 sentences max
 
@@ -122,8 +131,7 @@ When invoked WITH `--recall <query>`:
 
 1. **Search across all memory files**
    - Search `memory/MEMORY.md` (consolidated long-term memory)
-   - Search `memory/YYYY-MM-DD.md` files (recent daily logs)
-   - Search `memory/archive/*.md` if needed for older context
+   - Search `memory/YYYY-MM-DD.md` files (recent daily logs not yet consolidated)
 
 2. **Use multiple search strategies**
    - Keyword search: `grep -i "query" memory/*.md`
@@ -168,9 +176,7 @@ All agents read/write to a shared `memory/` folder in the workspace root (`~/.tu
 ```
 ~/.turboclaw/workspaces/memory/
 ├── MEMORY.md              # Consolidated long-term memory (all agents)
-├── 2026-02-16.md          # Today's log (all agents write here)
-└── archive/
-    └── 2026-02-15.md
+└── 2026-02-16.md          # Today's log (all agents write here)
 ```
 
 **Isolated memory (per-agent):**
@@ -178,9 +184,7 @@ Each agent reads/writes to `memory/` in their own workspace directory.
 ```
 ~/.turboclaw/workspaces/coach/memory/
 ├── MEMORY.md              # Coach's consolidated memory
-├── 2026-02-16.md          # Coach's daily log
-└── archive/
-    └── 2026-02-15.md
+└── 2026-02-16.md          # Coach's daily log
 ```
 
 **Configuration:** Set `memory_mode: "shared"` or `memory_mode: "isolated"` per agent in settings.json.
@@ -255,7 +259,7 @@ Response: "✓ Consolidated 7 days to MEMORY.md and reset conversation"
 **User asks about past decisions:**
 ```
 User: "What did we decide about the memory folder?"
-You: [Use memory --recall "memory folder"]
+You: [Use turboclaw-memory --recall "memory folder"]
 Response:
 Found in memory/2026-02-16.md:
 [2026-02-16 18:32] [preference] User prefers visible `memory/` folder over hidden `.memory/`
@@ -264,42 +268,46 @@ Found in memory/2026-02-16.md:
 **Search by tag:**
 ```
 User: "What preferences have we established?"
-You: [Use memory --recall "[preference]"]
+You: [Use turboclaw-memory --recall "[preference]"]
 Response: [List all preference entries from memory files]
 ```
 
 **Looking for context from a specific timeframe:**
 ```
 User: "What were we working on last week?"
-You: [Use memory --recall "last week" or read memory/2026-02-09.md through 2026-02-15.md]
+You: [Use turboclaw-memory --recall "last week" or read memory/2026-02-09.md through 2026-02-15.md]
 ```
 
 ## Implementation steps
 
 ### For log mode (default)
 
-1. Determine memory root (see "How to determine your memory root" above)
-2. Generate 2-5 concise entries from current context
-3. Append single-line entries to `<memory-root>/YYYY-MM-DD.md`: `## HH:MM @agent-id - [tag] entry text`
-4. Respond: "✓ Logged to memory/YYYY-MM-DD.md"
+1. Generate 2-5 concise entries from current context
+2. Write each entry using the CLI command:
+   ```bash
+   turboclaw memory log <agent-id> <tag> <message>
+   ```
+   Tags: `decision`, `preference`, `task`, `context`, `bug`, `note`
+3. Respond: "✓ Logged N entries"
 
 ### For consolidate mode (--consolidate)
 
 1. Read all `YYYY-MM-DD.md` files in your memory root
-2. Generate consolidated summary (10-15 key points)
-3. Append to `<memory-root>/MEMORY.md` with date range header
-4. Move daily logs to `<memory-root>/archive/`
+2. Generate consolidated entries in flat tagged format: `## YYYY-MM-DD [tag] entry text`
+3. Use judgement to keep only entries with lasting value (10-15 max)
+4. Append entries to `<memory-root>/MEMORY.md` — no headings, no prose, just tagged lines
 5. Run: `turboclaw reset-context <agent-id>`
 6. Respond: "✓ Consolidated X days to MEMORY.md and reset conversation"
 
 ### For recall mode (--recall <query>)
 
-1. Search `MEMORY.md` and `*.md` files in your memory root for query
-2. Use `grep -i` for case-insensitive search
-3. If query looks like a tag (e.g., "preference"), filter by tag first
-4. Extract matching entries with timestamps
-5. Format and present results chronologically
-6. If no results, suggest alternative search terms or tags
+1. Search using the CLI command:
+   ```bash
+   turboclaw memory search <agent-id> <query>
+   turboclaw memory search <agent-id> <query> --tag <tag>
+   ```
+2. Present results chronologically
+3. If no results, try broader search terms or different tags
 
 ## Detecting mode
 
@@ -351,7 +359,7 @@ turboclaw schedule add  # Then enter new timing
 - **Consolidate mode DOES reset** - starts fresh
 - **Recall mode does NOT reset** - just searches and returns results
 - **MEMORY.md is append-only** - never overwrite
-- **Daily logs get archived** - not deleted, just moved
+- **Daily logs are kept** - consolidation only appends to MEMORY.md, daily files stay for detailed recall
 - **Directory creation** - Create your memory root directory as needed
 - **Agent ID** - Use correct agent ID for reset command
 - **Search is case-insensitive** - recall mode uses `grep -i`
@@ -364,21 +372,15 @@ turboclaw schedule add  # Then enter new timing
 ## Viewing past memories
 
 ```bash
-# Current consolidated memory
-cat memory/MEMORY.md
-
-# Today's incremental log
-cat memory/2026-02-16.md
-
-# Archived daily logs
-ls -lt memory/archive/
-
 # Search all memories
-grep -r "keyword" memory/
+turboclaw memory search <agent-id> "keyword"
 
 # Filter by tag
-grep "\[preference\]" memory/*.md
-grep "\[decision\]" memory/*.md
+turboclaw memory search <agent-id> "keyword" --tag decision
+
+# Or read directly
+cat memory/MEMORY.md
+cat memory/2026-02-16.md
 ```
 
 ## Why this design?

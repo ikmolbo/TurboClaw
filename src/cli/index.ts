@@ -8,6 +8,7 @@ export type CLICommand =
   | "schedule"
   | "send"
   | "reset-context"
+  | "memory"
   | "reset-crashes"
   | "setup"
   | "help"
@@ -41,7 +42,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   // Handle commands
-  const validCommands: CLICommand[] = ["start", "stop", "status", "agents", "schedule", "send", "reset-context", "reset-crashes", "setup"];
+  const validCommands: CLICommand[] = ["start", "stop", "status", "agents", "schedule", "send", "memory", "reset-context", "reset-crashes", "setup"];
 
   if (validCommands.includes(firstArg as CLICommand)) {
     return {
@@ -72,8 +73,9 @@ Commands:
   start              Start the daemon
   stop               Stop the daemon
   status             Show system status
-  agents [cmd]       Manage agents (list, add, show, remove)
+  agents [cmd]       Manage agents (list, add, show, remove, install-skill)
   schedule [cmd]     Manage scheduled tasks (list, add, remove, enable, disable)
+  memory [cmd]       Memory log and search (log, search)
   send               Send a message to a user
   reset-context <id> Reset context for an agent
   reset-crashes      Clear crash history (for manual recovery)
@@ -212,6 +214,18 @@ async function executeCommand(parsed: ParsedArgs) {
         config = undefined;
       }
       await sendCommand(parsed.args, config);
+      break;
+    }
+
+    case "memory": {
+      const { memoryCommand } = await import("./commands/memory");
+      const { loadConfig } = await import("../config/index");
+      const path = await import("path");
+      const os = await import("os");
+
+      const configPath = path.join(os.homedir(), ".turboclaw", "config.yaml");
+      const config = await loadConfig(configPath);
+      await memoryCommand(parsed.args, config);
       break;
     }
 
