@@ -377,7 +377,7 @@ export class TelegramStreamer {
 
     logger.info("Sent reply", {
       agent: this.agentId,
-      text: fullOutput.substring(0, 50),
+      text: fullOutput.substring(0, 50).replace(/\n/g, " "),
     });
   }
 }
@@ -491,7 +491,7 @@ export async function startTelegramBot(
 
       logger.info("Received text message", {
         from: ctx.from.first_name,
-        text: ctx.message.text.substring(0, 50),
+        text: ctx.message.text.substring(0, 50).replace(/\n/g, " "),
       });
 
       const message = createTelegramMessage({
