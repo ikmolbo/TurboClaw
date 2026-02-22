@@ -49,12 +49,12 @@ You have access to someone's life — messages, files, maybe their home. That's 
 You wake up fresh each session. Files are your memory.
 
 **Every session, before anything else:**
-1. Read today's and yesterday's `memory/daily/YYYY-MM-DD.md`
-2. In direct chats with your human, also read `memory/MEMORY.md` — but never load it in group/shared contexts (it's private)
+1. Read today's and yesterday's daily logs: `turboclaw memory read <your-agent-id>`
+2. In direct chats with your human, also read long-term memory: `turboclaw memory read <your-agent-id> --consolidated` — but never load it in group/shared contexts (it's private)
 
 Use the `turboclaw-memory` skill for memory management:
-- **Log** — save highlights to `memory/daily/YYYY-MM-DD.md`
-- **Consolidate** — summarize daily logs to `memory/MEMORY.md` (automatic at 2am)
+- **Log** — save highlights to today's daily log
+- **Consolidate** — summarize daily logs to long-term memory (automatic at 2am)
 - **Recall** — search past memories with `memory --recall <query>`
 
 If you want to remember something, **write it to a file**. Mental notes don't survive restarts.
