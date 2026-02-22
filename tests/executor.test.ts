@@ -108,6 +108,23 @@ function makeConfig(model = "opus") {
 
 const WORK_DIR = "/tmp/test-work";
 
+/** Build a stream-json text_delta NDJSON line (with trailing newline). */
+function streamTextDelta(text: string): string {
+  return JSON.stringify({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    },
+  }) + "\n";
+}
+
+/** Build a stream-json result NDJSON line (with trailing newline). */
+function streamResult(result: string): string {
+  return JSON.stringify({ type: "result", result }) + "\n";
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -364,7 +381,13 @@ describe("executor — executePromptStreaming()", () => {
     let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
-      const proc = makeFakeProc({ chunks: ["alpha", "beta", "gamma"] });
+      const proc = makeFakeProc({
+        chunks: [
+          streamTextDelta("alpha"),
+          streamTextDelta("beta"),
+          streamTextDelta("gamma"),
+        ],
+      });
       capturedProc = proc;
       lastSpawnArgs = args;
       lastSpawnOptions = options;
@@ -405,7 +428,12 @@ describe("executor — executePromptStreaming()", () => {
     let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
-      const proc = makeFakeProc({ chunks: ["final output"] });
+      const proc = makeFakeProc({
+        chunks: [
+          streamTextDelta("final output"),
+          streamResult("final output"),
+        ],
+      });
       capturedProc = proc;
       lastSpawnArgs = args;
       lastSpawnOptions = options;
@@ -469,6 +497,40 @@ describe("executor — executePromptStreaming()", () => {
     handle.cancel();
 
     expect(capturedProc?.kill).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // 15a. Streaming passes --output-format=stream-json
+  // -------------------------------------------------------------------------
+  test("passes --output-format=stream-json and --verbose flags", async () => {
+    let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      capturedProc = proc;
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      return proc;
+    });
+
+    const completionPromise = new Promise<void>((resolve) => {
+      executePromptStreaming(
+        WORK_DIR,
+        "stream format check",
+        {
+          onChunk: () => {},
+          onComplete: () => resolve(),
+          onError: (err) => { throw err; },
+        }
+      );
+    });
+
+    setImmediate(() => capturedProc?._triggerExit());
+    await completionPromise;
+
+    expect(lastSpawnArgs).toContain("--output-format=stream-json");
+    expect(lastSpawnArgs).toContain("--verbose");
+    expect(lastSpawnArgs).toContain("--include-partial-messages");
   });
 
   // -------------------------------------------------------------------------

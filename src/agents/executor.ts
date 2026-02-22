@@ -242,7 +242,49 @@ export interface StreamingHandle {
 }
 
 /**
+ * Parse a stream-json line and extract text content if present.
+ * Returns the text delta string, or null if this event has no text.
+ */
+function extractStreamText(line: string): string | null {
+  if (!line.trim()) return null;
+  try {
+    const event = JSON.parse(line);
+
+    // Token-level streaming via --include-partial-messages
+    if (
+      event.type === "stream_event" &&
+      event.event?.type === "content_block_delta" &&
+      event.event?.delta?.type === "text_delta" &&
+      event.event.delta.text
+    ) {
+      return event.event.delta.text;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the final result text from a stream-json result event.
+ */
+function extractResultText(line: string): string | null {
+  if (!line.trim()) return null;
+  try {
+    const event = JSON.parse(line);
+    if (event.type === "result" && typeof event.result === "string") {
+      return event.result;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Execute a Claude prompt with streaming output.
+ * Uses --output-format=stream-json for real-time token streaming.
  * Returns a handle with cancel() immediately (synchronous).
  */
 export function executePromptStreaming(
@@ -253,14 +295,19 @@ export function executePromptStreaming(
 ): StreamingHandle {
   const { claudePath, args, env } = buildSpawnParams(workingDirectory, message, options);
 
+  // Enable stream-json output for real-time token streaming
+  args.push("--output-format=stream-json", "--verbose", "--include-partial-messages");
+
   logger.info("Executing Claude (streaming)", {
     workingDir: workingDirectory,
     messageLength: message.length,
     agentId: options.agentId,
   });
 
-  let output = "";
+  let resultText = "";
+  let textFromChunks = "";
   let errorOutput = "";
+  let lineBuffer = "";
 
   const childProcess = spawn(claudePath, args, {
     cwd: workingDirectory,
@@ -269,9 +316,25 @@ export function executePromptStreaming(
   });
 
   childProcess.stdout?.on("data", (data: Buffer) => {
-    const chunk = data.toString();
-    output += chunk;
-    callbacks.onChunk(chunk);
+    lineBuffer += data.toString();
+    const lines = lineBuffer.split("\n");
+    lineBuffer = lines.pop() ?? ""; // Keep incomplete last line in buffer
+
+    for (const line of lines) {
+      // Check for text deltas (token streaming)
+      const text = extractStreamText(line);
+      if (text) {
+        textFromChunks += text;
+        callbacks.onChunk(text);
+        continue;
+      }
+
+      // Check for final result
+      const result = extractResultText(line);
+      if (result !== null) {
+        resultText = result;
+      }
+    }
   });
 
   childProcess.stderr?.on("data", (data: Buffer) => {
@@ -284,7 +347,23 @@ export function executePromptStreaming(
   });
 
   childProcess.on("close", (exitCode: number | null) => {
+    // Process any remaining data in the line buffer
+    if (lineBuffer.trim()) {
+      const result = extractResultText(lineBuffer);
+      if (result !== null) {
+        resultText = result;
+      }
+      const text = extractStreamText(lineBuffer);
+      if (text) {
+        textFromChunks += text;
+        callbacks.onChunk(text);
+      }
+    }
+
     const code = exitCode ?? 0;
+    // Prefer the result event text, fall back to accumulated chunks
+    const output = resultText || textFromChunks;
+
     if (code === 0) {
       callbacks.onComplete({
         success: true,

@@ -278,17 +278,25 @@ export class TelegramStreamer {
 
   /**
    * Append a new text chunk to the internal buffer.
-   * Starts the throttle timer on the first chunk (does NOT flush immediately).
+   * On the first chunk, schedules an initial flush after a short delay,
+   * then starts the regular throttle interval for subsequent updates.
    */
   appendChunk(text: string): void {
     this.buffer += text;
 
     if (this.timer === null) {
-      this.timer = setInterval(() => {
+      // Short delay for the first flush so the user sees something quickly,
+      // then switch to the regular interval for subsequent edits.
+      this.timer = setTimeout(() => {
         this.flush().catch((err) => {
           logger.error("TelegramStreamer flush error", err);
         });
-      }, this.throttleMs);
+        this.timer = setInterval(() => {
+          this.flush().catch((err) => {
+            logger.error("TelegramStreamer flush error", err);
+          });
+        }, this.throttleMs);
+      }, 500) as any;
     }
   }
 
