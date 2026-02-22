@@ -101,7 +101,7 @@ When invoked WITHOUT `--consolidate`:
 ## 18:52 @coder - [task] Added better validation feedback per @support note
 ```
 
-**Common tags:**
+**Available tags:**
 - `[decision]` - Architectural/design choices made
 - `[preference]` - User preferences learned
 - `[task]` - Work completed or next steps
