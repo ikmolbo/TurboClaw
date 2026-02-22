@@ -62,7 +62,7 @@ export function findClaudePath(): string {
 /**
  * Build a system context string with date, timezone, and OS info
  */
-function buildSystemContext(): string {
+function buildSystemContext(agentId?: string): string {
   // "Wednesday 18th February 2026"
   const dateStr = format(new Date(), "EEEE do MMMM yyyy");
 
@@ -78,7 +78,11 @@ function buildSystemContext(): string {
   const release = os.release();
   const arch = os.arch();
 
-  return `Today's date is ${dateStr}. Timezone: ${timezone}. System: ${platformName} ${release} (${arch}).`;
+  let context = `Today's date is ${dateStr}. Timezone: ${timezone}. System: ${platformName} ${release} (${arch}).`;
+  if (agentId) {
+    context += ` Your agent ID is: ${agentId}`;
+  }
+  return context;
 }
 
 /**
@@ -141,7 +145,7 @@ function buildSpawnParams(
     args.push("-c");
   }
 
-  args.push("--append-system-prompt", buildSystemContext());
+  args.push("--append-system-prompt", buildSystemContext(options.agentId));
   args.push("-p", message);
 
   return { claudePath, args, env };

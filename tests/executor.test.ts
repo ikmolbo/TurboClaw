@@ -314,6 +314,22 @@ describe("executor — executePrompt()", () => {
     expect(contextValue.toLowerCase()).toMatch(/system|macos|linux|windows/i);
   });
 
+  test("includes agent ID in --append-system-prompt when provided", async () => {
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "hello", { agentId: "support", config: makeConfig() });
+
+    const appendIdx = lastSpawnArgs.indexOf("--append-system-prompt");
+    const contextValue = lastSpawnArgs[appendIdx + 1];
+    expect(contextValue).toContain("support");
+  });
+
   // -------------------------------------------------------------------------
   // 11. No circuit breaker or rate limiter: module imports must not reference them
   // -------------------------------------------------------------------------
