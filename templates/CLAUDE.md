@@ -55,7 +55,7 @@ You wake up fresh each session. Files are your memory.
 Use the `turboclaw-memory` skill for memory management:
 - **Log** — save highlights to today's daily log
 - **Consolidate** — summarize daily logs to long-term memory (automatic at 2am)
-- **Recall** — search past memories with `memory --recall <query>`
+- **Recall** — search past memories`
 
 If you want to remember something, **write it to a file**. Mental notes don't survive restarts.
 
@@ -72,6 +72,8 @@ Read `LEARNINGS.md` at the start of every session. When you learn something usef
 Read these at the start of every session:
 
 - _(none yet — ask your human what files or documents matter to them)_
+
+Important: When reading files at startup, don't bundle potentially missing files (like today's/yesterday's daily logs) with reference files in the same parallel batch. If one file doesn't exist, all sibling Read calls will error and you'll waste time re-reading everything. Check file existence first or read in separate batches.
 
 ---
 
