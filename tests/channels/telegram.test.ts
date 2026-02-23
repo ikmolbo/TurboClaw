@@ -597,7 +597,7 @@ describe("TelegramStreamer", () => {
     expect(combinedText).toContain("The complete answer");
   });
 
-  test("finalize() sends final message with Markdown parse mode", async () => {
+  test("finalize() sends final message with HTML parse mode", async () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
@@ -609,7 +609,7 @@ describe("TelegramStreamer", () => {
     const finalMessages = sentMessages.slice(1); // skip streaming message
     expect(finalMessages.length).toBeGreaterThanOrEqual(1);
     const lastCall = finalMessages[finalMessages.length - 1];
-    expect(lastCall.options).toMatchObject({ parse_mode: "Markdown" });
+    expect(lastCall.options).toMatchObject({ parse_mode: "HTML" });
   });
 
   test("finalize() does NOT delete streaming message if no message was sent", async () => {

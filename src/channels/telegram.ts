@@ -283,6 +283,56 @@ function basename(filePath: string): string {
   return parts[parts.length - 1] || filePath;
 }
 
+/**
+ * Convert Markdown text to Telegram-safe HTML.
+ *
+ * Strategy: escape all HTML entities first (making any input safe), then
+ * convert known Markdown constructs to the HTML tags Telegram supports.
+ * Code blocks/inline code are extracted into placeholders before other
+ * conversions so their content is never mangled.
+ */
+export function markdownToTelegramHtml(text: string): string {
+  // 1. Escape HTML entities (makes everything valid HTML)
+  let result = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // 2. Protect code blocks from further markdown processing
+  const placeholders: string[] = [];
+
+  // Fenced code blocks: ```lang\n...\n``` → <pre><code>...</code></pre>
+  result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+    const idx = placeholders.length;
+    placeholders.push(`<pre><code>${code}</code></pre>`);
+    return `\x00PLACEHOLDER_${idx}\x00`;
+  });
+
+  // Inline code: `...` → <code>...</code>
+  result = result.replace(/`([^`]+)`/g, (_match, code) => {
+    const idx = placeholders.length;
+    placeholders.push(`<code>${code}</code>`);
+    return `\x00PLACEHOLDER_${idx}\x00`;
+  });
+
+  // 3. Convert remaining markdown to HTML
+  // Bold: **...** → <b>...</b>
+  result = result.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // Italic: *...* → <i>...</i> (single asterisks only)
+  result = result.replace(/\*([^*]+)\*/g, "<i>$1</i>");
+  // Links: [text](url) → <a href="url">text</a>
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Strikethrough: ~~...~~ → <s>...</s>
+  result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // 4. Restore code placeholders
+  result = result.replace(/\x00PLACEHOLDER_(\d+)\x00/g, (_match, idx) => {
+    return placeholders[parseInt(idx)];
+  });
+
+  return result;
+}
+
 export class TelegramStreamer {
   // Public so tests can inspect it directly
   public buffer: string = "";
@@ -405,12 +455,12 @@ export class TelegramStreamer {
     const chunks = formatTelegramResponse(fullOutput);
     for (const chunk of chunks) {
       try {
-        await this.bot.api.sendMessage(this.chatId, chunk, {
-          parse_mode: "Markdown",
+        await this.bot.api.sendMessage(this.chatId, markdownToTelegramHtml(chunk), {
+          parse_mode: "HTML",
         });
       } catch (err) {
-        // Fallback: send without Markdown if parsing fails
-        logger.warn("Markdown parse failed in finalize, sending plain text", err);
+        // Fallback: send without formatting if HTML parsing fails
+        logger.warn("HTML parse failed in finalize, sending plain text", err);
         await this.bot.api.sendMessage(this.chatId, chunk);
       }
     }
@@ -788,11 +838,11 @@ export async function startTelegramSender(
             const chunks = formatTelegramResponse(text);
             for (const chunk of chunks) {
               try {
-                await bot.api.sendMessage(chatId, chunk, {
-                  parse_mode: "Markdown",
+                await bot.api.sendMessage(chatId, markdownToTelegramHtml(chunk), {
+                  parse_mode: "HTML",
                 });
               } catch (error) {
-                logger.warn("Markdown parsing failed, sending as plain text", {
+                logger.warn("HTML parsing failed, sending as plain text", {
                   error: error instanceof Error ? error.message : String(error),
                 });
                 await bot.api.sendMessage(chatId, chunk);
