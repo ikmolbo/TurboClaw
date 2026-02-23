@@ -228,8 +228,14 @@ export async function executePrompt(
 /**
  * Streaming callbacks
  */
+export interface ToolUseEvent {
+  name: string;
+  input: Record<string, any>;
+}
+
 export interface StreamingCallbacks {
   onChunk: (chunk: string) => void;
+  onToolUse?: (tool: ToolUseEvent) => void;
   onComplete: (result: ExecutionResult) => void;
   onError: (error: Error) => void;
 }
@@ -260,6 +266,26 @@ function extractStreamText(line: string): string | null {
       return event.event.delta.text;
     }
 
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a stream-json line and extract a tool_use event if present.
+ */
+function extractToolUse(line: string): ToolUseEvent | null {
+  if (!line.trim()) return null;
+  try {
+    const event = JSON.parse(line);
+    if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+      for (const block of event.message.content) {
+        if (block.type === "tool_use" && block.name) {
+          return { name: block.name, input: block.input ?? {} };
+        }
+      }
+    }
     return null;
   } catch {
     return null;
@@ -327,6 +353,15 @@ export function executePromptStreaming(
         textFromChunks += text;
         callbacks.onChunk(text);
         continue;
+      }
+
+      // Check for tool use events
+      if (callbacks.onToolUse) {
+        const tool = extractToolUse(line);
+        if (tool) {
+          callbacks.onToolUse(tool);
+          continue;
+        }
       }
 
       // Check for final result

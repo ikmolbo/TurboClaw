@@ -248,6 +248,41 @@ async function downloadTelegramFile(
  *   3. finalize(fullOutput) — stops timer, deletes streaming message, sends
  *      the complete final response (split into chunks if needed).
  */
+/**
+ * Format a tool_use event into a short status line for display.
+ */
+function formatToolStatus(name: string, input: Record<string, any>): string {
+  switch (name) {
+    case "Read":
+      return `Reading ${basename(input.file_path ?? "")}`;
+    case "Edit":
+      return `Editing ${basename(input.file_path ?? "")}`;
+    case "Write":
+      return `Writing ${basename(input.file_path ?? "")}`;
+    case "Bash": {
+      const cmd = input.command ?? "";
+      return `Running: ${cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd}`;
+    }
+    case "Grep":
+      return `Searching for "${input.pattern ?? ""}"`;
+    case "Glob":
+      return `Finding files: ${input.pattern ?? ""}`;
+    case "WebFetch":
+      return `Fetching ${input.url ?? ""}`;
+    case "WebSearch":
+      return `Searching: ${input.query ?? ""}`;
+    case "Task":
+      return `Launching subagent`;
+    default:
+      return name;
+  }
+}
+
+function basename(filePath: string): string {
+  const parts = filePath.split("/");
+  return parts[parts.length - 1] || filePath;
+}
+
 export class TelegramStreamer {
   // Public so tests can inspect it directly
   public buffer: string = "";
@@ -262,6 +297,13 @@ export class TelegramStreamer {
 
   // message_id of the in-progress "streaming" Telegram message, once sent
   private streamingMessageId: number | null = null;
+
+  // Text content of the last successful flush (to avoid no-op edits)
+  private lastFlushedText: string = "";
+
+  // Accumulated tool call status lines
+  private toolLines: string[] = [];
+  private toolsDirty: boolean = false;
 
   // Handle to the active throttle timer.
   // Named `timer` so tests can inspect via `(streamer as any).timer`.
@@ -278,63 +320,53 @@ export class TelegramStreamer {
 
   /**
    * Append a new text chunk to the internal buffer.
-   * On the first chunk, schedules an initial flush after a short delay,
-   * then starts the regular throttle interval for subsequent updates.
+   * Starts the throttle timer on the first chunk (does NOT flush immediately).
    */
   appendChunk(text: string): void {
     this.buffer += text;
-
-    if (this.timer === null) {
-      // Short delay for the first flush so the user sees something quickly,
-      // then switch to the regular interval for subsequent edits.
-      this.timer = setTimeout(() => {
-        this.flush().catch((err) => {
-          logger.error("TelegramStreamer flush error", err);
-        });
-        this.timer = setInterval(() => {
-          this.flush().catch((err) => {
-            logger.error("TelegramStreamer flush error", err);
-          });
-        }, this.throttleMs);
-      }, 500) as any;
-    }
   }
 
   /**
-   * Flush the current buffer to Telegram.
-   * - First call: sendMessage → stores message_id.
-   * - Subsequent calls: editMessageText with tail of buffer + streaming indicator.
-   * - Truncates to last ~3900 chars if buffer exceeds 4096.
+   * Record a tool use event for display in the streaming message.
+   * Flushes immediately on each tool call so the user sees updates in real time.
+   */
+  appendToolUse(name: string, input: Record<string, any>): void {
+    this.toolLines.push(formatToolStatus(name, input));
+    this.toolsDirty = true;
+
+    // Flush immediately so the user sees each tool call right away
+    this.flush().catch((err) => {
+      logger.error("TelegramStreamer flush error", err);
+    });
+  }
+
+  /**
+   * Flush the current tool status to Telegram.
+   * Shows a list of tool calls the agent has made so far.
    */
   async flush(): Promise<void> {
-    if (this.buffer.length === 0) return;
+    if (this.toolLines.length === 0) return;
+    if (!this.toolsDirty && this.streamingMessageId !== null) return;
 
-    const STREAMING_INDICATOR = "_(streaming...)_";
-    const MAX_EDIT_LENGTH = 4096 - STREAMING_INDICATOR.length;
-    const TAIL_LENGTH = 3900;
+    const text = this.toolLines.join("\n");
+    // Truncate to Telegram limit
+    const displayText = text.length > 4096 ? text.slice(-4000) : text;
+
+    if (displayText === this.lastFlushedText) return;
 
     if (this.streamingMessageId === null) {
-      // First flush — send a new message
-      const text = this.buffer.length > MAX_EDIT_LENGTH
-        ? this.buffer.slice(-TAIL_LENGTH) + STREAMING_INDICATOR
-        : this.buffer + STREAMING_INDICATOR;
-
-      const sent = await this.bot.api.sendMessage(this.chatId, text);
+      const sent = await this.bot.api.sendMessage(this.chatId, displayText);
       this.streamingMessageId = sent.message_id;
     } else {
-      // Subsequent flush — edit the existing streaming message
-      let displayText = this.buffer;
-      if (displayText.length > MAX_EDIT_LENGTH) {
-        displayText = displayText.slice(-TAIL_LENGTH);
-      }
-      const editText = displayText + STREAMING_INDICATOR;
-
       await this.bot.api.editMessageText(
         this.chatId,
         this.streamingMessageId,
-        editText
+        displayText
       );
     }
+
+    this.lastFlushedText = displayText;
+    this.toolsDirty = false;
   }
 
   /**

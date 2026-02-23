@@ -475,23 +475,24 @@ describe("TelegramStreamer", () => {
   // 5c. First flush — sendMessage
   // -------------------------------------------------------------------------
 
-  test("flush() sends initial message on first call (no prior message)", async () => {
+  test("flush() sends initial message on first tool use", async () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
-    streamer.appendChunk("Thinking...");
-    await (streamer as any).flush();
+    streamer.appendToolUse("Read", { file_path: "/tmp/test.md" });
+    // appendToolUse flushes immediately; wait for it
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0].chatId).toBe(CHAT_ID);
-    expect(sentMessages[0].text).toContain("Thinking...");
+    expect(sentMessages[0].text).toContain("Reading test.md");
     expect(editedMessages).toHaveLength(0);
   });
 
   test("flush() stores the returned message_id for subsequent edits", async () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
-    streamer.appendChunk("First chunk");
-    await (streamer as any).flush();
+    streamer.appendToolUse("Read", { file_path: "/tmp/file.ts" });
+    await new Promise((r) => setTimeout(r, 50));
 
     expect((streamer as any).streamingMessageId).toBe(1000);
   });
@@ -500,55 +501,42 @@ describe("TelegramStreamer", () => {
   // 5d. Subsequent flushes — editMessageText
   // -------------------------------------------------------------------------
 
-  test("second flush() edits the existing message instead of sending a new one", async () => {
+  test("second tool use edits the existing message instead of sending a new one", async () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    streamer.appendChunk("Part one");
-    await (streamer as any).flush(); // sends message, gets ID 1000
+    streamer.appendToolUse("Read", { file_path: "/tmp/a.ts" });
+    await new Promise((r) => setTimeout(r, 50)); // sends message, gets ID 1000
 
-    streamer.appendChunk(" Part two");
-    await (streamer as any).flush(); // should edit
+    streamer.appendToolUse("Edit", { file_path: "/tmp/b.ts" });
+    await new Promise((r) => setTimeout(r, 50)); // should edit
 
     expect(sentMessages).toHaveLength(1);
     expect(editedMessages).toHaveLength(1);
     expect(editedMessages[0].chatId).toBe(CHAT_ID);
     expect(editedMessages[0].messageId).toBe(1000);
-    expect(editedMessages[0].text).toContain("Part one");
-    expect(editedMessages[0].text).toContain("Part two");
-  });
-
-  test("streaming indicator '_(streaming...)_' is appended during edit", async () => {
-    const bot = makeMockBot();
-    const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
-
-    streamer.appendChunk("So far...");
-    await (streamer as any).flush(); // first: sendMessage
-
-    streamer.appendChunk(" more");
-    await (streamer as any).flush(); // second: editMessageText
-
-    const editText = editedMessages[0].text;
-    expect(editText).toContain("_(streaming...)_");
+    expect(editedMessages[0].text).toContain("Reading a.ts");
+    expect(editedMessages[0].text).toContain("Editing b.ts");
   });
 
   // -------------------------------------------------------------------------
   // 5e. Truncation during streaming
   // -------------------------------------------------------------------------
 
-  test("flush() truncates buffer to last ~3900 chars when over 4096 limit", async () => {
+  test("flush() truncates tool lines when over 4096 limit", async () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    // Fill buffer beyond 4096 chars
-    streamer.appendChunk("x".repeat(5000));
-    await (streamer as any).flush(); // first send
+    // Add many tool lines to exceed 4096 chars
+    for (let i = 0; i < 100; i++) {
+      streamer.appendToolUse("Read", { file_path: `/tmp/${"x".repeat(50)}-${i}.ts` });
+    }
+    await new Promise((r) => setTimeout(r, 50));
 
-    streamer.appendChunk("y".repeat(1000));
-    await (streamer as any).flush(); // edit should truncate
-
-    // The edited text must be within Telegram's limit
-    expect(editedMessages[0].text.length).toBeLessThanOrEqual(4096);
+    // All sent/edited messages must be within Telegram's limit
+    for (const m of [...sentMessages, ...editedMessages]) {
+      expect(m.text.length).toBeLessThanOrEqual(4096);
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -582,8 +570,8 @@ describe("TelegramStreamer", () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    streamer.appendChunk("In progress...");
-    await (streamer as any).flush(); // creates streaming message with ID 1000
+    streamer.appendToolUse("Read", { file_path: "/tmp/test.md" });
+    await new Promise((r) => setTimeout(r, 50)); // creates streaming message with ID 1000
 
     await streamer.finalize("Full final response");
 
@@ -596,8 +584,8 @@ describe("TelegramStreamer", () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    streamer.appendChunk("In progress...");
-    await (streamer as any).flush();
+    streamer.appendToolUse("Read", { file_path: "/tmp/test.md" });
+    await new Promise((r) => setTimeout(r, 50));
 
     const sentCountBefore = sentMessages.length; // 1 streaming message
     await streamer.finalize("The complete answer");
@@ -613,8 +601,8 @@ describe("TelegramStreamer", () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    streamer.appendChunk("Working...");
-    await (streamer as any).flush();
+    streamer.appendToolUse("Read", { file_path: "/tmp/test.md" });
+    await new Promise((r) => setTimeout(r, 50));
 
     await streamer.finalize("**Bold answer**");
 
@@ -655,8 +643,8 @@ describe("TelegramStreamer", () => {
     const bot = makeMockBot();
     const streamer = new TelegramStreamer(bot as any, CHAT_ID, AGENT_ID);
 
-    streamer.appendChunk("data");
-    await (streamer as any).flush();
+    streamer.appendToolUse("Read", { file_path: "/tmp/test.md" });
+    await new Promise((r) => setTimeout(r, 50));
     await streamer.finalize("done");
 
     // After finalize, the timer should be null/cleared

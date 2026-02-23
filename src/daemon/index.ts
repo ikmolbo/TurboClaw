@@ -152,6 +152,11 @@ export async function handleMessage(
           // resolve() is idempotent — subsequent calls are no-ops.
           (resolve as any)(noop);
         },
+        onToolUse: (tool) => {
+          if (streamer) {
+            streamer.appendToolUse(tool.name, tool.input);
+          }
+        },
         onComplete: async (result) => {
           const output = result.output || "";
           if (output.trim() === "HEARTBEAT_OK") {
