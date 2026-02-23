@@ -22,7 +22,7 @@ import {
   initializeQueue,
   type IncomingMessage,
 } from "../lib/queue";
-import { executePromptStreaming } from "../agents/executor";
+import { executePrompt, executePromptStreaming } from "../agents/executor";
 import {
   TelegramStreamer,
   startTelegramBot,
@@ -152,7 +152,23 @@ export async function handleMessage(
   // Check for reset signal
   const shouldReset = checkResetContext(agentId, options?.resetDir);
 
-  // Set up TelegramStreamer if channel is telegram
+  const execOptions = { agentId, config, reset: shouldReset };
+
+  // Heartbeat messages use non-streaming execution (no tool-call UI needed)
+  if (message.sender === "heartbeat") {
+    const result = await executePrompt(workingDirectory, message.message, execOptions);
+    const output = result.output || "";
+    if (output.trim() === "HEARTBEAT_OK") {
+      logger.info("Heartbeat OK — no action needed", { agentId });
+    } else if (message.channel === "telegram") {
+      const chatId = parseInt(message.senderId as string);
+      const streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId);
+      await streamer.finalize(output);
+    }
+    return;
+  }
+
+  // Regular messages use streaming execution
   let streamer: InstanceType<typeof TelegramStreamer> | null = null;
   if (message.channel === "telegram") {
     const chatId = parseInt(message.senderId as string);
@@ -182,9 +198,7 @@ export async function handleMessage(
         },
         onComplete: async (result) => {
           const output = result.output || "";
-          if (output.trim() === "HEARTBEAT_OK") {
-            logger.info("Heartbeat OK — no action needed", { agentId });
-          } else if (streamer) {
+          if (streamer) {
             await streamer.finalize(output);
           }
           (resolve as any)(noop);
@@ -194,11 +208,7 @@ export async function handleMessage(
           (resolve as any)(noop);
         },
       },
-      {
-        agentId,
-        config,
-        reset: shouldReset,
-      }
+      execOptions
     );
   });
 }
