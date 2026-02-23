@@ -267,8 +267,8 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     // Call the _onStart hook (test hook: called after PID file written)
     options?._onStart?.();
 
-    // Load configuration
-    const config = await loadConfig(configPath);
+    // Load configuration (reloaded periodically in the main loop)
+    let config = await loadConfig(configPath);
 
     // Initialize queue directories
     await initializeQueue(queueDir);
@@ -334,11 +334,24 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
 
     // Main polling loop
     let lastSchedulerRun = 0;
+    let lastConfigReload = Date.now();
     const SCHEDULER_INTERVAL_MS = 30 * 1000; // 30 seconds
+    const CONFIG_RELOAD_INTERVAL_MS = 60 * 1000; // 1 minute
     const POLL_INTERVAL_MS = 1000; // 1 second
     const lastHeartbeat = new Map<string, number>();
 
     while (running) {
+      // Reload config periodically (picks up model, heartbeat, env changes without restart)
+      const reloadNow = Date.now();
+      if (reloadNow - lastConfigReload >= CONFIG_RELOAD_INTERVAL_MS) {
+        lastConfigReload = reloadNow;
+        try {
+          config = await loadConfig(configPath);
+          logger.debug("Config reloaded");
+        } catch (error) {
+          logger.warn("Config reload failed, keeping previous config", { error });
+        }
+      }
       // Process incoming queue
       try {
         const queued = await readIncoming(queueDir);
