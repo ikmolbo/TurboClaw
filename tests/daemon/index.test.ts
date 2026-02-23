@@ -476,10 +476,12 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
     // Manually trigger a chunk
     capturedCallbacks.onChunk("chunk of text");
 
-    await handlerPromise;
-
     const streamer = telegramStreamerInstances[0];
     expect(streamer.appendChunkCalls).toContain("chunk of text");
+
+    // Resolve the promise by completing the handler
+    capturedCallbacks.onComplete({ success: true, output: "chunk of text", exitCode: 0 });
+    await handlerPromise;
   });
 
   test("onComplete callback delegates to streamer.finalize() with full output", async () => {
@@ -815,7 +817,7 @@ describe("handleMessage() — error handling", () => {
     capturedCallbacks.onError(new Error("Claude CLI crashed"));
 
     // handleMessage should resolve (not reject) on executor error
-    await expect(handlerPromise).resolves.not.toThrow();
+    await handlerPromise;
   });
 
   test("does not throw when executor calls onError on telegram channel", async () => {
@@ -840,7 +842,7 @@ describe("handleMessage() — error handling", () => {
 
     capturedCallbacks.onError(new Error("Streaming failure"));
 
-    await expect(handlerPromise).resolves.not.toThrow();
+    await handlerPromise;
   });
 });
 
@@ -1275,6 +1277,313 @@ describe("isWithinActiveHours()", () => {
       expect(isWithinActiveHours("07:30-08:00")).toBe(false);
     });
   });
+});
+
+// ============================================================================
+// 15. Per-agent busy lock — sequential processing for same agent
+// ============================================================================
+
+import { writeIncoming, readIncoming, deleteMessage } from "../../src/lib/queue";
+
+describe("readIncoming() — skipAgentIds filtering", () => {
+  let queueDir: string;
+
+  beforeEach(() => {
+    queueDir = makeTempDir("skip-agents");
+    fs.mkdirSync(path.join(queueDir, "incoming"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "outgoing"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "errors"), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(queueDir)) fs.rmSync(queueDir, { recursive: true });
+  });
+
+  test("skips messages for agents in skipAgentIds set", async () => {
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent1", message: "first" }),
+      queueDir
+    );
+    // Small delay so the second message has a later mtime
+    await Bun.sleep(10);
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent2", message: "second" }),
+      queueDir
+    );
+
+    const result = await readIncoming(queueDir, {
+      skipAgentIds: new Set(["agent1"]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.message.agentId).toBe("agent2");
+    expect(result!.message.message).toBe("second");
+  });
+
+  test("returns null when all queued agents are in skipAgentIds", async () => {
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent1", message: "only" }),
+      queueDir
+    );
+
+    const result = await readIncoming(queueDir, {
+      skipAgentIds: new Set(["agent1"]),
+    });
+
+    expect(result).toBeNull();
+  });
+
+  test("returns message normally when skipAgentIds is empty", async () => {
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent1", message: "hello" }),
+      queueDir
+    );
+
+    const result = await readIncoming(queueDir, {
+      skipAgentIds: new Set(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.message.agentId).toBe("agent1");
+  });
+
+  test("returns message normally when no options provided", async () => {
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent1", message: "hello" }),
+      queueDir
+    );
+
+    const result = await readIncoming(queueDir);
+
+    expect(result).not.toBeNull();
+    expect(result!.message.agentId).toBe("agent1");
+  });
+
+  test("leaves skipped messages in the queue (not deleted)", async () => {
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agent1", message: "busy-msg" }),
+      queueDir
+    );
+
+    // First read skips agent1
+    const skipped = await readIncoming(queueDir, {
+      skipAgentIds: new Set(["agent1"]),
+    });
+    expect(skipped).toBeNull();
+
+    // Second read without skip finds it
+    const found = await readIncoming(queueDir);
+    expect(found).not.toBeNull();
+    expect(found!.message.message).toBe("busy-msg");
+  });
+});
+
+describe("Daemon busy-agent lock — sequential processing", () => {
+  let tmpDir: string;
+  let queueDir: string;
+  let daemonPromise: Promise<void> | null = null;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("busy-lock");
+    queueDir = path.join(tmpDir, "queue");
+    fs.mkdirSync(path.join(queueDir, "incoming"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "outgoing"), { recursive: true });
+    fs.mkdirSync(path.join(queueDir, "errors"), { recursive: true });
+    executePromptStreamingMock.mockClear();
+    executePromptMock.mockClear();
+    telegramStreamerInstances = [];
+  });
+
+  afterEach(async () => {
+    if (daemonPromise) {
+      process.emit("SIGTERM" as any);
+      await Promise.race([daemonPromise, Bun.sleep(3000)]);
+      daemonPromise = null;
+    }
+    // Restore the default mock implementations
+    executePromptStreamingMock.mockImplementation(
+      (workDir: string, message: string, callbacks: any, options: any) => {
+        lastStreamingWorkDir = workDir;
+        lastStreamingMessage = message;
+        lastStreamingCallbacks = callbacks;
+        lastStreamingOptions = options;
+        setImmediate(() => {
+          callbacks.onChunk("Hello from agent");
+          callbacks.onComplete({ success: true, output: "Hello from agent", exitCode: 0 });
+        });
+        return fakeHandle;
+      }
+    );
+    executePromptMock.mockImplementation(async (_workDir: string, _message: string, _options: any) => ({
+      success: true,
+      output: "done",
+      exitCode: 0,
+    }));
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test("two messages for the same agent are processed sequentially", async () => {
+    // Track the order of executor calls and completions
+    const events: string[] = [];
+    const completionCallbacks: Array<(result: any) => void> = [];
+
+    executePromptStreamingMock.mockImplementation(
+      (_workDir: string, message: string, callbacks: any, _options: any) => {
+        events.push(`start:${message}`);
+        // Hold onto the onComplete callback so we can resolve manually
+        completionCallbacks.push((result: any) => {
+          events.push(`complete:${message}`);
+          callbacks.onComplete(result);
+        });
+        return { cancel: mock(() => {}) };
+      }
+    );
+
+    // Create config with one agent
+    const configPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      [
+        "workspace:",
+        "  path: /tmp/ws",
+        "providers: {}",
+        "agents:",
+        "  agentA:",
+        "    name: Agent A",
+        "    provider: anthropic",
+        "    model: sonnet",
+        "    working_directory: /tmp/agentA-work",
+        "    telegram:",
+        '      bot_token: "123456:ABC-fake"',
+      ].join("\n")
+    );
+
+    // Queue two messages for the same agent
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agentA", message: "msg1" }),
+      queueDir
+    );
+    await Bun.sleep(10);
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agentA", message: "msg2" }),
+      queueDir
+    );
+
+    // Start daemon
+    daemonPromise = runDaemon({
+      configPath,
+      queueDir,
+      tasksDir: path.join(tmpDir, "tasks"),
+      pidFile: path.join(tmpDir, "daemon.pid"),
+      baseDir: tmpDir,
+    });
+
+    // Wait for first message to be picked up
+    await Bun.sleep(2500);
+
+    // Only the first message should have started (agent is busy)
+    expect(events).toContain("start:msg1");
+    expect(events).not.toContain("start:msg2");
+
+    // Complete the first message
+    completionCallbacks[0]({ success: true, output: "done1", exitCode: 0 });
+
+    // Wait for the second message to be picked up
+    await Bun.sleep(2500);
+
+    expect(events).toContain("start:msg2");
+
+    // Complete the second and shut down
+    if (completionCallbacks[1]) {
+      completionCallbacks[1]({ success: true, output: "done2", exitCode: 0 });
+    }
+
+    process.emit("SIGTERM" as any);
+    await Promise.race([daemonPromise, Bun.sleep(2000)]);
+    daemonPromise = null;
+
+    // Verify sequential order: msg1 started before msg2
+    const startMsg1Idx = events.indexOf("start:msg1");
+    const startMsg2Idx = events.indexOf("start:msg2");
+    expect(startMsg1Idx).toBeLessThan(startMsg2Idx);
+  }, 15000);
+
+  test("messages for different agents can run in parallel", async () => {
+    const events: string[] = [];
+    const completionCallbacks: Map<string, (result: any) => void> = new Map();
+
+    executePromptStreamingMock.mockImplementation(
+      (_workDir: string, message: string, callbacks: any, _options: any) => {
+        events.push(`start:${message}`);
+        completionCallbacks.set(message, (result: any) => {
+          events.push(`complete:${message}`);
+          callbacks.onComplete(result);
+        });
+        return { cancel: mock(() => {}) };
+      }
+    );
+
+    // Create config with two agents
+    const configPath = path.join(tmpDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      [
+        "workspace:",
+        "  path: /tmp/ws",
+        "providers: {}",
+        "agents:",
+        "  agentA:",
+        "    name: Agent A",
+        "    provider: anthropic",
+        "    model: sonnet",
+        "    working_directory: /tmp/agentA-work",
+        "    telegram:",
+        '      bot_token: "123456:ABC-fake-A"',
+        "  agentB:",
+        "    name: Agent B",
+        "    provider: anthropic",
+        "    model: sonnet",
+        "    working_directory: /tmp/agentB-work",
+        "    telegram:",
+        '      bot_token: "654321:ABC-fake-B"',
+      ].join("\n")
+    );
+
+    // Queue one message per agent
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agentA", message: "msgA" }),
+      queueDir
+    );
+    await Bun.sleep(10);
+    await writeIncoming(
+      makeIncomingMessage({ agentId: "agentB", message: "msgB" }),
+      queueDir
+    );
+
+    // Start daemon
+    daemonPromise = runDaemon({
+      configPath,
+      queueDir,
+      tasksDir: path.join(tmpDir, "tasks"),
+      pidFile: path.join(tmpDir, "daemon.pid"),
+      baseDir: tmpDir,
+    });
+
+    // Wait for both messages to be picked up (they should run in parallel)
+    await Bun.sleep(3000);
+
+    // Both should have started even though neither has completed
+    expect(events).toContain("start:msgA");
+    expect(events).toContain("start:msgB");
+
+    // Complete both and shut down
+    completionCallbacks.get("msgA")?.({ success: true, output: "doneA", exitCode: 0 });
+    completionCallbacks.get("msgB")?.({ success: true, output: "doneB", exitCode: 0 });
+
+    process.emit("SIGTERM" as any);
+    await Promise.race([daemonPromise, Bun.sleep(2000)]);
+    daemonPromise = null;
+  }, 15000);
 });
 
 // Restore all module mocks after this file so they don't leak into other test files

@@ -175,9 +175,6 @@ export async function handleMessage(
     streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId);
   }
 
-  // Resolve with a no-op function so bun's .resolves.not.toThrow() works correctly
-  const noop = () => {};
-
   return new Promise<void>((resolve) => {
     executePromptStreaming(
       workingDirectory,
@@ -187,9 +184,6 @@ export async function handleMessage(
           if (streamer) {
             streamer.appendChunk(chunk);
           }
-          // Resolve on first chunk so tests waiting for onChunk can proceed.
-          // resolve() is idempotent — subsequent calls are no-ops.
-          (resolve as any)(noop);
         },
         onToolUse: (tool) => {
           if (streamer) {
@@ -201,11 +195,11 @@ export async function handleMessage(
           if (streamer) {
             await streamer.finalize(output);
           }
-          (resolve as any)(noop);
+          resolve();
         },
         onError: (error: Error) => {
           logger.error("Executor error", error);
-          (resolve as any)(noop);
+          resolve();
         },
       },
       execOptions
@@ -333,6 +327,7 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     process.on("SIGINT", shutdown);
 
     // Main polling loop
+    const busyAgents = new Set<string>();
     let lastSchedulerRun = 0;
     let lastConfigReload = Date.now();
     const SCHEDULER_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -354,15 +349,19 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
       }
       // Process incoming queue
       try {
-        const queued = await readIncoming(queueDir);
+        const queued = await readIncoming(queueDir, { skipAgentIds: busyAgents });
         if (queued) {
           await deleteMessage(queued.id, "incoming", queueDir);
-          const bot = agentBots.get(queued.message.agentId ?? "");
-          handleMessage(queued.message, config, { queueDir, resetDir, bot }).catch(
-            (err) => {
+          const agentId = queued.message.agentId ?? "";
+          busyAgents.add(agentId);
+          const bot = agentBots.get(agentId);
+          handleMessage(queued.message, config, { queueDir, resetDir, bot })
+            .catch((err) => {
               logger.error("handleMessage error", err);
-            }
-          );
+            })
+            .finally(() => {
+              busyAgents.delete(agentId);
+            });
         }
       } catch (error) {
         logger.error("Error reading incoming queue", error);

@@ -179,7 +179,8 @@ export async function writeIncoming(
  * Returns null if the queue is empty or the directory does not exist.
  */
 export async function readIncoming(
-  queueDir?: string
+  queueDir?: string,
+  options?: { skipAgentIds?: Set<string> }
 ): Promise<QueuedMessage<IncomingMessage> | null> {
   const base = queueDir ?? path.join(os.homedir(), ".turboclaw", "queue");
   const dir = path.join(base, "incoming");
@@ -195,6 +196,9 @@ export async function readIncoming(
       base
     );
     if (message) {
+      if (options?.skipAgentIds?.has(message.agentId ?? "")) {
+        continue;
+      }
       return { id: name.replace(".json", ""), message, filePath };
     }
   }
