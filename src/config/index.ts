@@ -50,6 +50,10 @@ export const ConfigSchema = z
       path: z.string(),
     }),
     allowed_users: z.array(z.number()).optional(),
+    env: z
+      .record(z.string(), z.string())
+      .optional()
+      .transform((val) => val ?? {}),
     skill_directories: z
       .array(z.string())
       .optional()
@@ -73,12 +77,17 @@ export const ConfigSchema = z
           provider: z.string(),
           model: z.string(),
           working_directory: z.string(),
-          heartbeat_interval: z.union([z.number(), z.literal(false)]).optional(),
+          heartbeat: z
+            .object({
+              interval: z.union([z.number(), z.literal(false)]),
+              active_hours: z.string().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/).optional(),
+              telegram_chat_id: z.number().optional(),
+            })
+            .optional(),
           memory_mode: z.enum(["shared", "isolated"]).optional(),
           telegram: z
             .object({
               bot_token: z.string(),
-              chat_id: z.number().optional(),
             })
             .optional(),
         })

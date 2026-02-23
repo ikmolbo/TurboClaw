@@ -35,6 +35,29 @@ import fs from "fs";
 
 const logger = createLogger("daemon");
 
+/**
+ * Check if the current local time falls within a "HH:MM-HH:MM" active-hours range.
+ * Handles overnight ranges (e.g. "22:00-06:00").
+ */
+export function isWithinActiveHours(range: string): boolean {
+  const [startStr, endStr] = range.split("-");
+  const [startH, startM] = startStr.split(":").map(Number);
+  const [endH, endM] = endStr.split(":").map(Number);
+
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+
+  if (startMinutes <= endMinutes) {
+    // Normal range (e.g. 07:00-22:00)
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  } else {
+    // Overnight range (e.g. 22:00-06:00)
+    return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+  }
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -331,15 +354,26 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
         });
       }
 
-      // Check heartbeats for agents with heartbeat_interval and chat_id
+      // Check heartbeats for agents with heartbeat config
       for (const [agentId, agent] of Object.entries(config.agents)) {
-        const interval = agent.heartbeat_interval;
-        if (!interval || interval === false) continue;
-        if (!agent.telegram?.chat_id) continue;
+        const hb = agent.heartbeat;
+        if (!hb || !hb.interval || hb.interval === false) continue;
 
         const lastBeat = lastHeartbeat.get(agentId) ?? 0;
-        const intervalMs = (interval as number) * 1000;
+        const intervalMs = (hb.interval as number) * 1000;
         if (now - lastBeat < intervalMs) continue;
+
+        // Only log skip reasons once per due heartbeat (not every poll cycle)
+        if (!hb.telegram_chat_id) {
+          logger.debug("Heartbeat skipped — no telegram_chat_id configured", { agentId });
+          lastHeartbeat.set(agentId, now);
+          continue;
+        }
+        if (hb.active_hours && !isWithinActiveHours(hb.active_hours)) {
+          logger.debug("Heartbeat skipped — outside active hours", { agentId, active_hours: hb.active_hours });
+          lastHeartbeat.set(agentId, now);
+          continue;
+        }
 
         // Read HEARTBEAT.md from agent's working directory
         try {
@@ -367,7 +401,7 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
             {
               channel: "telegram",
               sender: "heartbeat",
-              senderId: String(agent.telegram.chat_id),
+              senderId: String(hb.telegram_chat_id),
               message: content,
               timestamp: now,
               messageId: `heartbeat-${agentId}-${now}`,

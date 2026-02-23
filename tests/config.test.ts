@@ -57,11 +57,13 @@ describe("Configuration System", () => {
             provider: "anthropic",
             model: "sonnet",
             working_directory: "~/.turboclaw/workspaces/coder",
-            heartbeat_interval: 10800,
+            heartbeat: {
+              interval: 10800,
+              telegram_chat_id: 123456789,
+            },
             memory_mode: "isolated",
             telegram: {
               bot_token: "123456:ABC-DEF",
-              chat_id: 123456789,
             },
           },
         },
@@ -444,7 +446,6 @@ describe("Configuration System", () => {
             working_directory: "/tmp/test",
             telegram: {
               bot_token: "token",
-              chat_id: 12345,
             },
           },
         },
@@ -504,7 +505,6 @@ describe("Configuration System", () => {
             working_directory: "~/.turboclaw/workspaces/coder",
             telegram: {
               bot_token: "token",
-              chat_id: 12345,
             },
           },
         },
@@ -528,21 +528,21 @@ describe("Configuration System", () => {
             provider: "anthropic",
             model: "opus",
             working_directory: "/tmp/opus",
-            telegram: { bot_token: "t", chat_id: 1 },
+            telegram: { bot_token: "t" },
           },
           sonnet_agent: {
             name: "Sonnet Agent",
             provider: "anthropic",
             model: "sonnet",
             working_directory: "/tmp/sonnet",
-            telegram: { bot_token: "t", chat_id: 2 },
+            telegram: { bot_token: "t" },
           },
           haiku_agent: {
             name: "Haiku Agent",
             provider: "anthropic",
             model: "haiku",
             working_directory: "/tmp/haiku",
-            telegram: { bot_token: "t", chat_id: 3 },
+            telegram: { bot_token: "t" },
           },
         },
       };
@@ -632,7 +632,9 @@ describe("Configuration System", () => {
             provider: "anthropic",
             model: "sonnet",
             working_directory: "~/.turboclaw/workspaces/coder",
-            heartbeat_interval: 10800,
+            heartbeat: {
+              interval: 10800,
+            },
             memory_mode: "isolated",
             telegram: {
               bot_token: "123456:ABC...",
@@ -932,8 +934,8 @@ describe("Configuration System", () => {
     });
   });
 
-  describe("Heartbeat Interval", () => {
-    it("should accept heartbeat_interval as number", () => {
+  describe("Heartbeat Config", () => {
+    it("should accept heartbeat.interval as number", () => {
       const config = {
         workspace: { path: "/tmp" },
         providers: {},
@@ -943,7 +945,7 @@ describe("Configuration System", () => {
             provider: "anthropic",
             model: "sonnet",
             working_directory: "/tmp/test",
-            heartbeat_interval: 3600,
+            heartbeat: { interval: 3600 },
           },
         },
       };
@@ -951,11 +953,11 @@ describe("Configuration System", () => {
       const result = ConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.agents.test.heartbeat_interval).toBe(3600);
+        expect(result.data.agents.test.heartbeat?.interval).toBe(3600);
       }
     });
 
-    it("should accept heartbeat_interval as false to disable", () => {
+    it("should accept heartbeat.interval as false to disable", () => {
       const config = {
         workspace: { path: "/tmp" },
         providers: {},
@@ -965,7 +967,7 @@ describe("Configuration System", () => {
             provider: "anthropic",
             model: "sonnet",
             working_directory: "/tmp/test",
-            heartbeat_interval: false,
+            heartbeat: { interval: false },
           },
         },
       };
@@ -973,11 +975,11 @@ describe("Configuration System", () => {
       const result = ConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.agents.test.heartbeat_interval).toBe(false);
+        expect(result.data.agents.test.heartbeat?.interval).toBe(false);
       }
     });
 
-    it("should allow heartbeat_interval to be omitted", () => {
+    it("should allow heartbeat to be omitted", () => {
       const config = {
         workspace: { path: "/tmp" },
         providers: {},
@@ -993,6 +995,33 @@ describe("Configuration System", () => {
 
       const result = ConfigSchema.safeParse(config);
       expect(result.success).toBe(true);
+    });
+
+    it("should accept heartbeat with active_hours and telegram_chat_id", () => {
+      const config = {
+        workspace: { path: "/tmp" },
+        providers: {},
+        agents: {
+          test: {
+            name: "Test",
+            provider: "anthropic",
+            model: "sonnet",
+            working_directory: "/tmp/test",
+            heartbeat: {
+              interval: 10800,
+              active_hours: "07:00-22:00",
+              telegram_chat_id: 123456789,
+            },
+          },
+        },
+      };
+
+      const result = ConfigSchema.safeParse(config);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.agents.test.heartbeat?.active_hours).toBe("07:00-22:00");
+        expect(result.data.agents.test.heartbeat?.telegram_chat_id).toBe(123456789);
+      }
     });
   });
 

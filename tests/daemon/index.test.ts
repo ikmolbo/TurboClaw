@@ -156,9 +156,11 @@ function makeTelegramConfig(agentId = "agent1"): any {
         provider: "anthropic",
         model: "claude-opus-4-6",
         working_directory: "/tmp/agent1-work",
+        heartbeat: {
+          telegram_chat_id: 999888777,
+        },
         telegram: {
           bot_token: "123456:ABC-fake-token",
-          chat_id: 999888777,
         },
       },
     },
@@ -405,7 +407,7 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
-      senderId: String(config.agents["agent1"].telegram.chat_id),
+      senderId: String(config.agents["agent1"].heartbeat.telegram_chat_id),
     });
 
     await handleMessage(message, config, { queueDir: tmpDir });
@@ -415,7 +417,7 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
 
   test("TelegramStreamer is created with the correct chatId from message.senderId", async () => {
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -431,7 +433,7 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
 
   test("TelegramStreamer is created with the correct agentId", async () => {
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -446,7 +448,7 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
 
   test("onChunk callback delegates to streamer.appendChunk()", async () => {
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
 
     // Override mock to NOT immediately call callbacks — let us trigger manually
     let capturedCallbacks: any = null;
@@ -482,7 +484,7 @@ describe("handleMessage() — TelegramStreamer for telegram channel", () => {
 
   test("onComplete callback delegates to streamer.finalize() with full output", async () => {
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
 
     let capturedCallbacks: any = null;
     executePromptStreamingMock.mockImplementationOnce(
@@ -826,7 +828,7 @@ describe("handleMessage() — error handling", () => {
     );
 
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -897,7 +899,7 @@ describe("handleMessage() — HEARTBEAT_OK filtering", () => {
     );
 
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -927,7 +929,7 @@ describe("handleMessage() — HEARTBEAT_OK filtering", () => {
     );
 
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -954,7 +956,7 @@ describe("handleMessage() — HEARTBEAT_OK filtering", () => {
     );
 
     const config = makeTelegramConfig("agent1");
-    const chatId = config.agents["agent1"].telegram.chat_id;
+    const chatId = config.agents["agent1"].heartbeat.telegram_chat_id;
     const message = makeIncomingMessage({
       agentId: "agent1",
       channel: "telegram",
@@ -1055,10 +1057,11 @@ describe("Heartbeat generation — heartbeat fires and is processed by daemon", 
         "    provider: anthropic",
         "    model: sonnet",
         `    working_directory: ${workDir}`,
-        "    heartbeat_interval: 1",
+        "    heartbeat:",
+        "      interval: 1",
+        "      telegram_chat_id: 999888777",
         "    telegram:",
         '      bot_token: "123456:ABC-fake"',
-        "      chat_id: 999888777",
       ].join("\n")
     );
 
@@ -1086,7 +1089,7 @@ describe("Heartbeat generation — heartbeat fires and is processed by daemon", 
     expect(heartbeatCall![0]).toBe(workDir);
   });
 
-  test("heartbeat skips agents without chat_id", async () => {
+  test("heartbeat skips agents without telegram_chat_id", async () => {
     const workDir = path.join(tmpDir, "agent-work-no-chatid");
     fs.mkdirSync(workDir, { recursive: true });
     fs.writeFileSync(path.join(workDir, "HEARTBEAT.md"), "Check status.");
@@ -1104,7 +1107,8 @@ describe("Heartbeat generation — heartbeat fires and is processed by daemon", 
         "    provider: anthropic",
         "    model: sonnet",
         `    working_directory: ${workDir}`,
-        "    heartbeat_interval: 1",
+        "    heartbeat:",
+        "      interval: 1",
         "    telegram:",
         '      bot_token: "123456:ABC-fake"',
       ].join("\n")
@@ -1148,10 +1152,11 @@ describe("Heartbeat generation — heartbeat fires and is processed by daemon", 
         "    provider: anthropic",
         "    model: sonnet",
         `    working_directory: ${workDir}`,
-        "    heartbeat_interval: 1",
+        "    heartbeat:",
+        "      interval: 1",
+        "      telegram_chat_id: 111222333",
         "    telegram:",
         '      bot_token: "123456:ABC-fake"',
-        "      chat_id: 111222333",
       ].join("\n")
     );
 
@@ -1170,6 +1175,102 @@ describe("Heartbeat generation — heartbeat fires and is processed by daemon", 
 
     // Executor should NOT have been called
     expect(executePromptStreamingMock).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// 14. isWithinActiveHours — unit tests
+// ============================================================================
+
+import { isWithinActiveHours } from "../../src/daemon/index";
+
+describe("isWithinActiveHours()", () => {
+  // Helper to mock Date to a specific hour:minute
+  function withTime(hour: number, minute: number, fn: () => void) {
+    const original = globalThis.Date;
+    const fakeNow = new original();
+    fakeNow.setHours(hour, minute, 0, 0);
+
+    globalThis.Date = class extends original {
+      constructor(...args: any[]) {
+        if (args.length === 0) {
+          super(fakeNow.getTime());
+        } else {
+          // @ts-ignore
+          super(...args);
+        }
+      }
+      static now() { return fakeNow.getTime(); }
+    } as any;
+
+    try {
+      fn();
+    } finally {
+      globalThis.Date = original;
+    }
+  }
+
+  test("returns true when current time is within a normal range", () => {
+    withTime(12, 0, () => {
+      expect(isWithinActiveHours("07:00-22:00")).toBe(true);
+    });
+  });
+
+  test("returns false when current time is outside a normal range", () => {
+    withTime(3, 0, () => {
+      expect(isWithinActiveHours("07:00-22:00")).toBe(false);
+    });
+  });
+
+  test("returns true at exact start boundary", () => {
+    withTime(7, 0, () => {
+      expect(isWithinActiveHours("07:00-22:00")).toBe(true);
+    });
+  });
+
+  test("returns false at exact end boundary", () => {
+    withTime(22, 0, () => {
+      expect(isWithinActiveHours("07:00-22:00")).toBe(false);
+    });
+  });
+
+  test("handles overnight range — time after start", () => {
+    withTime(23, 30, () => {
+      expect(isWithinActiveHours("22:00-06:00")).toBe(true);
+    });
+  });
+
+  test("handles overnight range — time before end", () => {
+    withTime(4, 0, () => {
+      expect(isWithinActiveHours("22:00-06:00")).toBe(true);
+    });
+  });
+
+  test("handles overnight range — time outside range", () => {
+    withTime(12, 0, () => {
+      expect(isWithinActiveHours("22:00-06:00")).toBe(false);
+    });
+  });
+
+  test("handles overnight range — at exact start", () => {
+    withTime(22, 0, () => {
+      expect(isWithinActiveHours("22:00-06:00")).toBe(true);
+    });
+  });
+
+  test("handles overnight range — at exact end", () => {
+    withTime(6, 0, () => {
+      expect(isWithinActiveHours("22:00-06:00")).toBe(false);
+    });
+  });
+
+  test("handles minute precision", () => {
+    withTime(7, 30, () => {
+      expect(isWithinActiveHours("07:30-08:00")).toBe(true);
+    });
+    withTime(7, 29, () => {
+      expect(isWithinActiveHours("07:30-08:00")).toBe(false);
+    });
   });
 });
 

@@ -29,7 +29,7 @@ export async function sendCommand(args: string[], config?: Config): Promise<void
   // Get agent config for telegram details
   const agentConfig = config?.agents?.[agentId];
   const botToken = agentConfig?.telegram?.bot_token;
-  const chatId = agentConfig?.telegram?.chat_id;
+  const chatId = agentConfig?.heartbeat?.telegram_chat_id;
 
   // Write to outgoing queue
   await writeOutgoing(

@@ -44,7 +44,10 @@ providers:
 #     provider: anthropic
 #     model: sonnet               # opus, sonnet, haiku, or full model ID
 #     working_directory: ~/.turboclaw/workspaces/coder
-#     heartbeat_interval: 10800   # seconds (e.g. 3600 = 1h), or false to disable
+#     heartbeat:
+#       interval: 10800           # seconds (e.g. 3600 = 1h), or false to disable
+#       # active_hours: "07:00-22:00"
+#       telegram_chat_id: 123456789
 #     memory_mode: isolated       # isolated (private) or shared (all agents)
 #     telegram:
 #       bot_token: "123456:ABC..."

@@ -109,6 +109,11 @@ function buildSpawnParams(
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.CLAUDECODE;
 
+  // Apply top-level env vars from config
+  if (options.config?.env) {
+    Object.assign(env, options.config.env);
+  }
+
   // Inject agent ID
   if (options.agentId) {
     env.TURBOCLAW_AGENT_ID = options.agentId;

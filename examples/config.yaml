@@ -12,6 +12,10 @@ workspace:
 # allowed_users:
 #   - 123456789
 
+# Environment variables passed to all agents
+# env:
+#   LINEAR_API_KEY: "lin_api_..."
+
 providers:
   anthropic:
     # api_key: sk-ant-...       # or use ANTHROPIC_API_KEY env var
@@ -23,12 +27,13 @@ agents:
     provider: anthropic
     model: sonnet               # opus, sonnet, haiku, or full model ID
     working_directory: ~/.turboclaw/workspaces/coder
-    heartbeat_interval: 10800   # seconds (3 hours), or false to disable
+    heartbeat:
+      interval: 10800            # seconds (3 hours), or false to disable
+      # active_hours: "07:00-22:00"  # optional: only fire heartbeats during these hours (local time)
+      telegram_chat_id: 123456789  # user/group ID where heartbeat replies are sent
     memory_mode: isolated       # shared or isolated
     telegram:
       bot_token: "123456:ABC..."
-      chat_id: 123456789          # user ID or group ID where heartbeat replies are sent
-                                  # must be in allowed_users if that list is set
 
 # Audio transcription (optional)
 # Credentials are pulled from the named provider in the providers section above.

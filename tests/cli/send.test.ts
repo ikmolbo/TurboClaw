@@ -25,9 +25,12 @@ const mockConfig: Config = {
       provider: "anthropic",
       model: "claude-sonnet-4-5-20250929",
       working_directory: "/tmp/coder",
-      heartbeat_interval: false,
+      heartbeat: {
+        interval: false,
+        telegram_chat_id: 12345,
+      },
       memory_mode: "isolated",
-      telegram: { bot_token: "123:ABC", chat_id: 12345 },
+      telegram: { bot_token: "123:ABC" },
     },
   },
 };

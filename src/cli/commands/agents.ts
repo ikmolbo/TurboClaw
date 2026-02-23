@@ -18,7 +18,11 @@ export interface AgentInfo {
   provider: string;
   model: string;
   workingDirectory: string;
-  heartbeat_interval: number | false;
+  heartbeat?: {
+    interval: number | false;
+    active_hours?: string;
+    telegram_chat_id?: number;
+  };
   memory_mode: "shared" | "isolated";
   telegram?: {
     bot_token: string;
@@ -31,7 +35,11 @@ export interface CreateAgentData {
   provider: "anthropic";
   model: "opus" | "sonnet" | "haiku";
   working_directory: string;
-  heartbeat_interval: number | false;
+  heartbeat?: {
+    interval: number | false;
+    active_hours?: string;
+    telegram_chat_id?: number;
+  };
   memory_mode: "shared" | "isolated";
   telegram?: {
     bot_token: string;
@@ -139,7 +147,7 @@ export function listAgents(config: Config): AgentInfo[] {
       provider: agentConfig.provider,
       model: agentConfig.model,
       workingDirectory: agentConfig.working_directory,
-      heartbeat_interval: agentConfig.heartbeat_interval ?? false,
+      ...(agentConfig.heartbeat && { heartbeat: agentConfig.heartbeat }),
       memory_mode: agentConfig.memory_mode ?? "shared",
       ...(agentConfig.telegram && { telegram: agentConfig.telegram }),
     });
@@ -164,7 +172,7 @@ export function getAgent(id: string, config: Config): AgentInfo | undefined {
     provider: agentConfig.provider,
     model: agentConfig.model,
     workingDirectory: agentConfig.working_directory,
-    heartbeat_interval: agentConfig.heartbeat_interval ?? false,
+    ...(agentConfig.heartbeat && { heartbeat: agentConfig.heartbeat }),
     memory_mode: agentConfig.memory_mode ?? "shared",
     ...(agentConfig.telegram && { telegram: agentConfig.telegram }),
   };
@@ -278,7 +286,7 @@ export async function createAgent(
     provider: agentData.provider,
     model: agentData.model,
     working_directory: unexpandPath(workingDir),
-    heartbeat_interval: agentData.heartbeat_interval,
+    ...(agentData.heartbeat && { heartbeat: agentData.heartbeat }),
     memory_mode: agentData.memory_mode,
     ...(agentData.telegram && { telegram: agentData.telegram }),
   };
@@ -299,7 +307,7 @@ export async function createAgent(
   renameSync(tmpPath, configPath);
 
   // Note: Heartbeats are now built into the daemon
-  // The daemon reads heartbeat_interval from config.yaml and fires heartbeats automatically
+  // The daemon reads heartbeat.interval from config.yaml and fires heartbeats automatically
   // No need to create separate task files
 
   logger.info("Agent created successfully", { id: agentData.id });
@@ -512,7 +520,7 @@ export async function interactiveCreateAgent(config: Config, configPath: string)
         provider: "anthropic",
         model: model as "opus" | "sonnet" | "haiku",
         working_directory: workingDir as string,
-        heartbeat_interval: heartbeatInterval as number | false,
+        heartbeat: { interval: heartbeatInterval as number | false },
         memory_mode: memoryMode as "shared" | "isolated",
         telegram: telegramConfig,
         skill_install_mode: skillInstallMode as "copy" | "symlink",
@@ -661,7 +669,7 @@ export async function agentsCommand(args: string[], config: Config, configPath: 
         console.log(`  ${agent.id}`);
         console.log(`    Name: ${agent.name}`);
         console.log(`    Model: ${agent.model}`);
-        console.log(`    Heartbeat: ${agent.heartbeat_interval === false ? "Disabled" : `${agent.heartbeat_interval}s`}`);
+        console.log(`    Heartbeat: ${!agent.heartbeat || agent.heartbeat.interval === false ? "Disabled" : `${agent.heartbeat.interval}s`}`);
         console.log(`    Memory: ${agent.memory_mode}`);
         console.log();
       });
@@ -714,7 +722,7 @@ export async function agentsCommand(args: string[], config: Config, configPath: 
       console.log(`  Provider: ${agent.provider}`);
       console.log(`  Model: ${agent.model}`);
       console.log(`  Working Directory: ${agent.workingDirectory}`);
-      console.log(`  Heartbeat: ${agent.heartbeat_interval === false ? "Disabled" : `${agent.heartbeat_interval}s`}`);
+      console.log(`  Heartbeat: ${!agent.heartbeat || agent.heartbeat.interval === false ? "Disabled" : `${agent.heartbeat.interval}s`}`);
       console.log(`  Memory Mode: ${agent.memory_mode}`);
 
       if (agent.telegram) {
