@@ -307,8 +307,17 @@ export async function processTasksNonBlocking(
     // Fire in background (non-blocking)
     (async () => {
       try {
-        await executeTask(task, queueDir);
-      } catch {}
+        const taskResult = await executeTask(task, queueDir);
+        if (taskResult.skipped) {
+          logger.debug("Task skipped (condition not met)", { name: task.name });
+        } else if (taskResult.success) {
+          logger.info("Task executed", { name: task.name, message: taskResult.message });
+        } else {
+          logger.error("Task failed", { name: task.name, error: taskResult.error });
+        }
+      } catch (err) {
+        logger.error("Task threw exception", { name: task.name, error: err });
+      }
     })();
   }
 
