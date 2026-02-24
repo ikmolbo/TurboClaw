@@ -341,8 +341,11 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
       if (reloadNow - lastConfigReload >= CONFIG_RELOAD_INTERVAL_MS) {
         lastConfigReload = reloadNow;
         try {
-          config = await loadConfig(configPath);
-          logger.debug("Config reloaded");
+          const newConfig = await loadConfig(configPath);
+          if (JSON.stringify(newConfig) !== JSON.stringify(config)) {
+            config = newConfig;
+            logger.debug("Config reloaded");
+          }
         } catch (error) {
           logger.warn("Config reload failed, keeping previous config", { error });
         }
