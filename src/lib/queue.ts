@@ -24,6 +24,7 @@ const IncomingMessageSchema = z.object({
   messageId: z.string(),
   agentId: z.string().optional(),
   botToken: z.string().optional(),
+  sessionId: z.string().optional(),
   media: z
     .array(
       z.object({

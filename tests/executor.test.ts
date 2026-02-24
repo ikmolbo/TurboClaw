@@ -182,12 +182,12 @@ describe("executor — executePrompt()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 3. Continue mode: default behavior passes -c flag
+  // 3. Default behavior: no session ID means no -c and no --session-id
   // -------------------------------------------------------------------------
-  test("passes -c flag by default (continue mode)", async () => {
+  test("does not pass -c or --session-id by default (no sessionId provided)", async () => {
     const result = await executePrompt(WORK_DIR, "continue me");
 
-    expect(lastSpawnArgs).toContain("-c");
+    expect(lastSpawnArgs).not.toContain("-c");
   });
 
   // -------------------------------------------------------------------------
@@ -534,9 +534,9 @@ describe("executor — executePromptStreaming()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 15. Streaming also passes -c flag by default
+  // 15. Streaming mode: no session ID means no -c and no --session-id
   // -------------------------------------------------------------------------
-  test("passes -c flag by default in streaming mode", async () => {
+  test("does not pass -c or --session-id by default in streaming mode (no sessionId provided)", async () => {
     let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
@@ -562,7 +562,7 @@ describe("executor — executePromptStreaming()", () => {
     setImmediate(() => capturedProc?._triggerExit());
     await completionPromise;
 
-    expect(lastSpawnArgs).toContain("-c");
+    expect(lastSpawnArgs).not.toContain("-c");
   });
 
   // -------------------------------------------------------------------------
@@ -632,5 +632,174 @@ describe("executor — executePromptStreaming()", () => {
     await completionPromise;
 
     expect(lastSpawnOptions.env?.TURBOCLAW_AGENT_ID).toBe("streaming-agent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HAN-31: Session ID flag tests
+// These tests are written in the RED phase before implementation.
+// They will FAIL until buildSpawnParams is updated to use --session-id.
+// ---------------------------------------------------------------------------
+
+describe("executor — session ID flag (HAN-31)", () => {
+  beforeEach(() => {
+    spawnMock.mockClear();
+    lastProc = null;
+    lastSpawnArgs = [];
+    lastSpawnOptions = {};
+  });
+
+  // -------------------------------------------------------------------------
+  // S1. sessionId provided → --session-id <uuid> appears in args
+  // -------------------------------------------------------------------------
+  test("passes --session-id flag with the provided session ID value", async () => {
+    const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "session test", { sessionId });
+
+    expect(lastSpawnArgs).toContain("--session-id");
+    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
+  });
+
+  // -------------------------------------------------------------------------
+  // S2. sessionId provided → -c flag must NOT appear
+  // -------------------------------------------------------------------------
+  test("does not pass -c flag when sessionId is provided", async () => {
+    const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "session test", { sessionId });
+
+    expect(lastSpawnArgs).not.toContain("-c");
+  });
+
+  // -------------------------------------------------------------------------
+  // S3. No sessionId provided → neither -c nor --session-id
+  //     NOTE: Existing tests 3 and 15 check for -c. Once the implementation
+  //     is updated those tests will also change (in the green phase).
+  //     These new tests describe the DESIRED post-implementation behaviour.
+  // -------------------------------------------------------------------------
+  test("passes neither -c nor --session-id when no sessionId is provided and reset is true", async () => {
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "no session reset", { reset: true });
+
+    expect(lastSpawnArgs).not.toContain("-c");
+    expect(lastSpawnArgs).not.toContain("--session-id");
+  });
+
+  // -------------------------------------------------------------------------
+  // S4. reset: true with sessionId → --session-id still present (session wins)
+  // -------------------------------------------------------------------------
+  test("passes --session-id even when reset:true is also set", async () => {
+    const sessionId = "8341c70a-f680-4ef2-96ac-cb055c51d94b";
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "session with reset", { sessionId, reset: true });
+
+    expect(lastSpawnArgs).toContain("--session-id");
+    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
+    // -c must still be absent
+    expect(lastSpawnArgs).not.toContain("-c");
+  });
+
+  // -------------------------------------------------------------------------
+  // S5. sessionId in streaming mode → --session-id appears
+  // -------------------------------------------------------------------------
+  test("passes --session-id in streaming mode when sessionId is provided", async () => {
+    const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
+    let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      capturedProc = proc;
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      return proc;
+    });
+
+    const completionPromise = new Promise<void>((resolve) => {
+      executePromptStreaming(
+        WORK_DIR,
+        "streaming session",
+        {
+          onChunk: () => {},
+          onComplete: () => resolve(),
+          onError: (err) => { throw err; },
+        },
+        { sessionId }
+      );
+    });
+
+    setImmediate(() => capturedProc?._triggerExit());
+    await completionPromise;
+
+    expect(lastSpawnArgs).toContain("--session-id");
+    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
+    expect(lastSpawnArgs).not.toContain("-c");
+  });
+
+  // -------------------------------------------------------------------------
+  // S6. No sessionId in streaming mode, no reset → no --session-id
+  // -------------------------------------------------------------------------
+  test("does not pass --session-id in streaming mode when no sessionId provided", async () => {
+    let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      capturedProc = proc;
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      return proc;
+    });
+
+    const completionPromise = new Promise<void>((resolve) => {
+      executePromptStreaming(
+        WORK_DIR,
+        "streaming no session",
+        {
+          onChunk: () => {},
+          onComplete: () => resolve(),
+          onError: (err) => { throw err; },
+        },
+        { reset: true }  // no sessionId
+      );
+    });
+
+    setImmediate(() => capturedProc?._triggerExit());
+    await completionPromise;
+
+    expect(lastSpawnArgs).not.toContain("--session-id");
   });
 });

@@ -333,6 +333,43 @@ export function markdownToTelegramHtml(text: string): string {
   return result;
 }
 
+// ============================================================================
+// HAN-31: session ID helpers
+// ============================================================================
+
+const EMOJI_PALETTE = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫"];
+
+/**
+ * Return a deterministic emoji character (one of 8) for a given session ID.
+ * The emoji is selected by summing all character codes of the session ID,
+ * masking to 16 bits, and taking the result modulo 8.
+ *
+ * @param sessionId - A UUID string identifying the Claude session.
+ * @returns A single emoji from the palette ['🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫'].
+ */
+export function sessionIdToEmoji(sessionId: string): string {
+  let hash = 0;
+  for (const char of sessionId) {
+    hash = (hash + char.charCodeAt(0)) & 0xffff;
+  }
+  return EMOJI_PALETTE[hash % 8];
+}
+
+/**
+ * Extract a Claude session UUID from a message that contains a session footer
+ * blockquote of the form: <blockquote>{emoji} session:{uuid}</blockquote>
+ * Returns null if no valid UUID footer is found.
+ *
+ * @param text - The full message text that may contain a session footer.
+ * @returns The UUID string if found, or null.
+ */
+export function extractSessionIdFromText(text: string): string | null {
+  const match = text.match(
+    /session:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+  );
+  return match ? match[1] : null;
+}
+
 export class TelegramStreamer {
   // Public so tests can inspect it directly
   public buffer: string = "";
@@ -344,6 +381,7 @@ export class TelegramStreamer {
   private bot: any;
   private chatId: number;
   private agentId: string;
+  private sessionId?: string;
 
   // message_id of the in-progress "streaming" Telegram message, once sent
   private streamingMessageId: number | null = null;
@@ -362,10 +400,20 @@ export class TelegramStreamer {
   // through to `timer`, which will be null after finalize().
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(bot: any, chatId: number, agentId: string) {
+  /**
+   * Create a new TelegramStreamer.
+   *
+   * @param bot - The grammy Bot instance (or compatible mock).
+   * @param chatId - The Telegram chat ID to send messages to.
+   * @param agentId - The agent identifier, used for logging.
+   * @param sessionId - Optional Claude session UUID. When provided, a session
+   *   footer blockquote is appended to the last message chunk in finalize().
+   */
+  constructor(bot: any, chatId: number, agentId: string, sessionId?: string) {
     this.bot = bot;
     this.chatId = chatId;
     this.agentId = agentId;
+    this.sessionId = sessionId;
   }
 
   /**
@@ -453,15 +501,21 @@ export class TelegramStreamer {
     }
 
     const chunks = formatTelegramResponse(fullOutput);
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      let html = markdownToTelegramHtml(chunks[i]);
+      if (isLast && this.sessionId) {
+        const emoji = sessionIdToEmoji(this.sessionId);
+        html += `\n<blockquote>${emoji} session:${this.sessionId}</blockquote>`;
+      }
       try {
-        await this.bot.api.sendMessage(this.chatId, markdownToTelegramHtml(chunk), {
+        await this.bot.api.sendMessage(this.chatId, html, {
           parse_mode: "HTML",
         });
       } catch (err) {
         // Fallback: send without formatting if HTML parsing fails
         logger.warn("HTML parse failed in finalize, sending plain text", err);
-        await this.bot.api.sendMessage(this.chatId, chunk);
+        await this.bot.api.sendMessage(this.chatId, chunks[i]);
       }
     }
 
@@ -596,6 +650,19 @@ export async function startTelegramBot(
         message.agentId = agentId;
       }
       message.botToken = botToken;
+
+      // Extract session ID from reply-to message footer (if replying to a previous response)
+      if (ctx.message.reply_to_message) {
+        const replyText =
+          (ctx.message.reply_to_message as any).text ||
+          (ctx.message.reply_to_message as any).caption ||
+          "";
+        const extractedSessionId = extractSessionIdFromText(replyText);
+        if (extractedSessionId) {
+          message.sessionId = extractedSessionId;
+          logger.debug("Session ID extracted from reply-to", { sessionId: extractedSessionId });
+        }
+      }
 
       await queue.writeIncoming(message);
       logger.debug("Message queued", { messageId: message.messageId });

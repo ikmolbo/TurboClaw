@@ -28,10 +28,12 @@ import {
   startTelegramBot,
   startTelegramSender,
 } from "../channels/telegram";
+import { getOrCreateSessionId, writeSessionId } from "../lib/sessions";
 import { processTasksNonBlocking } from "../scheduler/index";
 import path from "path";
 import os from "os";
 import fs from "fs";
+import { randomUUID } from "crypto";
 
 const logger = createLogger("daemon");
 
@@ -152,7 +154,22 @@ export async function handleMessage(
   // Check for reset signal
   const shouldReset = checkResetContext(agentId, options?.resetDir);
 
-  const execOptions = { agentId, config, reset: shouldReset };
+  // Resolve session ID for this execution
+  let sessionId: string;
+  if (shouldReset) {
+    // Fresh session on reset
+    sessionId = randomUUID();
+    writeSessionId(agentId, sessionId);
+  } else if (message.sessionId) {
+    // Reply-to: switch to the referenced session
+    writeSessionId(agentId, message.sessionId);
+    sessionId = message.sessionId;
+  } else {
+    // Continue existing session (or create one if this is the first message)
+    sessionId = getOrCreateSessionId(agentId);
+  }
+
+  const execOptions = { agentId, config, reset: shouldReset, sessionId };
 
   // Heartbeat messages use non-streaming execution (no tool-call UI needed)
   if (message.sender === "heartbeat") {
@@ -162,7 +179,7 @@ export async function handleMessage(
       logger.info("Heartbeat OK — no action needed", { agentId });
     } else if (message.channel === "telegram") {
       const chatId = parseInt(message.senderId as string);
-      const streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId);
+      const streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId, sessionId);
       await streamer.finalize(output);
     }
     return;
@@ -172,7 +189,7 @@ export async function handleMessage(
   let streamer: InstanceType<typeof TelegramStreamer> | null = null;
   if (message.channel === "telegram") {
     const chatId = parseInt(message.senderId as string);
-    streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId);
+    streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId, sessionId);
   }
 
   return new Promise<void>((resolve) => {

@@ -79,8 +79,8 @@ const RealTelegramStreamer = realTelegramModule.TelegramStreamer;
 class InstrumentedTelegramStreamer extends RealTelegramStreamer {
   public _record: { chatId: number; agentId: string; appendChunkCalls: string[]; finalizeCalls: string[] };
 
-  constructor(bot: any, chatId: number, agentId: string) {
-    super(bot, chatId, agentId);
+  constructor(bot: any, chatId: number, agentId: string, sessionId?: string) {
+    super(bot, chatId, agentId, sessionId);
     this._record = { chatId, agentId, appendChunkCalls: [], finalizeCalls: [] };
     telegramStreamerInstances.push(this._record);
   }

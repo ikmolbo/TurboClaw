@@ -93,6 +93,8 @@ export interface ExecuteOptions {
   reset?: boolean;
   config?: Config;
   agentId?: string;
+  /** Claude session UUID. When provided, --session-id is passed instead of -c. */
+  sessionId?: string;
 }
 
 /**
@@ -145,9 +147,9 @@ function buildSpawnParams(
     "--dangerously-skip-permissions",
   ];
 
-  // Only pass -c flag if NOT resetting and continue is not explicitly false
-  if (options.reset !== true && options.continue !== false) {
-    args.push("-c");
+  // Use --session-id when provided; -c is no longer used
+  if (options.sessionId) {
+    args.push("--session-id", options.sessionId);
   }
 
   args.push("--append-system-prompt", buildSystemContext(options.agentId));
