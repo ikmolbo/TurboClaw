@@ -579,6 +579,74 @@ describe("handleMessage() — reset context flag integration", () => {
 });
 
 // ============================================================================
+// 5b. handleMessage — sessionMode controls session resolution
+// ============================================================================
+
+describe("handleMessage() — sessionMode on incoming messages", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir("handle-session-mode");
+    executePromptStreamingMock.mockClear();
+    lastStreamingOptions = null;
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test("sessionMode:'isolated' creates a new session (isNewSession:true)", async () => {
+    const config = makeInternalConfig("agent1");
+    const message = makeIncomingMessage({ agentId: "agent1", sessionMode: "isolated" });
+
+    await handleMessage(message, config, { queueDir: tmpDir });
+
+    expect(lastStreamingOptions?.isNewSession).toBe(true);
+    expect(lastStreamingOptions?.sessionId).toBeDefined();
+    expect(typeof lastStreamingOptions?.sessionId).toBe("string");
+  });
+
+  test("sessionMode:'isolated' does not persist to sessions.yaml", async () => {
+    const config = makeInternalConfig("agent1");
+    const message = makeIncomingMessage({ agentId: "agent1", sessionMode: "isolated" });
+
+    await handleMessage(message, config, { queueDir: tmpDir });
+
+    const sessionId = lastStreamingOptions?.sessionId;
+    // Import readSessionId to check the file wasn't updated with this UUID
+    const { readSessionId } = await import("../../src/lib/sessions");
+    const stored = readSessionId("agent1");
+    // The isolated session ID must not have been written
+    expect(stored).not.toBe(sessionId);
+  });
+
+  test("sessionMode:'current' uses existing session (isNewSession:false)", async () => {
+    // Write a known session ID first
+    const { writeSessionId } = await import("../../src/lib/sessions");
+    const knownId = "aaaabbbb-1111-2222-3333-444444444444";
+    writeSessionId("agent1", knownId);
+
+    const config = makeInternalConfig("agent1");
+    const message = makeIncomingMessage({ agentId: "agent1", sessionMode: "current" });
+
+    await handleMessage(message, config, { queueDir: tmpDir });
+
+    expect(lastStreamingOptions?.sessionId).toBe(knownId);
+    expect(lastStreamingOptions?.isNewSession).toBe(false);
+  });
+
+  test("no sessionMode defaults to getOrCreateSessionId behaviour", async () => {
+    const config = makeInternalConfig("agent1");
+    const message = makeIncomingMessage({ agentId: "agent1" });
+
+    await handleMessage(message, config, { queueDir: tmpDir });
+
+    // Should have a session ID and it should be persisted
+    expect(lastStreamingOptions?.sessionId).toBeDefined();
+  });
+});
+
+// ============================================================================
 // 6. CRASH GUARD — runDaemon exits early if crash loop detected
 // ============================================================================
 

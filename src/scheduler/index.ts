@@ -26,6 +26,9 @@ const TaskActionSchema = z.object({
   command: z.string().optional(),
   condition: z.string().optional(),
   replyTo: z.string().optional(),
+  /** Session mode for agent-message tasks: "isolated" (default) starts a
+   *  throwaway session; "latest" continues the agent's current session. */
+  session: z.enum(["isolated", "latest"]).default("isolated"),
 });
 
 const TaskSchema = z.object({
@@ -225,6 +228,7 @@ export async function executeTask(
           message: action.message!,
           timestamp: Date.now(),
           messageId: `scheduler-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          sessionMode: action.session === "latest" ? "current" : "isolated",
         },
         queueDir
       );

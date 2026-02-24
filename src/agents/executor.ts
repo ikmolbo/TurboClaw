@@ -93,8 +93,10 @@ export interface ExecuteOptions {
   reset?: boolean;
   config?: Config;
   agentId?: string;
-  /** Claude session UUID. When provided, --session-id is passed instead of -c. */
+  /** Claude session UUID. When provided, --session-id or --resume is passed. */
   sessionId?: string;
+  /** When true, use --session-id (new session). When false, use --resume (continue). */
+  isNewSession?: boolean;
 }
 
 /**
@@ -147,9 +149,13 @@ function buildSpawnParams(
     "--dangerously-skip-permissions",
   ];
 
-  // Use --session-id when provided; -c is no longer used
+  // --session-id creates a new session with that UUID; --resume continues an existing one
   if (options.sessionId) {
-    args.push("--session-id", options.sessionId);
+    if (options.isNewSession) {
+      args.push("--session-id", options.sessionId);
+    } else {
+      args.push("--resume", options.sessionId);
+    }
   }
 
   args.push("--append-system-prompt", buildSystemContext(options.agentId));

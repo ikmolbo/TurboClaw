@@ -650,9 +650,31 @@ describe("executor — session ID flag (HAN-31)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S1. sessionId provided → --session-id <uuid> appears in args
+  // S1. sessionId + isNewSession:true → --session-id <uuid> appears in args
   // -------------------------------------------------------------------------
-  test("passes --session-id flag with the provided session ID value", async () => {
+  test("passes --session-id flag when isNewSession is true", async () => {
+    const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
+
+    spawnMock.mockImplementationOnce((_cmd, args, options) => {
+      const proc = makeFakeProc();
+      lastSpawnArgs = args;
+      lastSpawnOptions = options;
+      setImmediate(() => proc._triggerExit());
+      return proc;
+    });
+
+    await executePrompt(WORK_DIR, "session test", { sessionId, isNewSession: true });
+
+    expect(lastSpawnArgs).toContain("--session-id");
+    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
+    expect(lastSpawnArgs).not.toContain("--resume");
+  });
+
+  // -------------------------------------------------------------------------
+  // S1b. sessionId without isNewSession → --resume <uuid> appears in args
+  // -------------------------------------------------------------------------
+  test("passes --resume flag when sessionId provided without isNewSession", async () => {
     const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
@@ -665,9 +687,10 @@ describe("executor — session ID flag (HAN-31)", () => {
 
     await executePrompt(WORK_DIR, "session test", { sessionId });
 
-    expect(lastSpawnArgs).toContain("--session-id");
-    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs).toContain("--resume");
+    const idx = lastSpawnArgs.indexOf("--resume");
     expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
+    expect(lastSpawnArgs).not.toContain("--session-id");
   });
 
   // -------------------------------------------------------------------------
@@ -684,18 +707,15 @@ describe("executor — session ID flag (HAN-31)", () => {
       return proc;
     });
 
-    await executePrompt(WORK_DIR, "session test", { sessionId });
+    await executePrompt(WORK_DIR, "session test", { sessionId, isNewSession: true });
 
     expect(lastSpawnArgs).not.toContain("-c");
   });
 
   // -------------------------------------------------------------------------
-  // S3. No sessionId provided → neither -c nor --session-id
-  //     NOTE: Existing tests 3 and 15 check for -c. Once the implementation
-  //     is updated those tests will also change (in the green phase).
-  //     These new tests describe the DESIRED post-implementation behaviour.
+  // S3. No sessionId provided → neither -c nor --session-id nor --resume
   // -------------------------------------------------------------------------
-  test("passes neither -c nor --session-id when no sessionId is provided and reset is true", async () => {
+  test("passes neither -c, --session-id, nor --resume when no sessionId is provided", async () => {
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
       const proc = makeFakeProc();
       lastSpawnArgs = args;
@@ -708,12 +728,13 @@ describe("executor — session ID flag (HAN-31)", () => {
 
     expect(lastSpawnArgs).not.toContain("-c");
     expect(lastSpawnArgs).not.toContain("--session-id");
+    expect(lastSpawnArgs).not.toContain("--resume");
   });
 
   // -------------------------------------------------------------------------
-  // S4. reset: true with sessionId → --session-id still present (session wins)
+  // S4. reset: true with sessionId + isNewSession → --session-id (new session)
   // -------------------------------------------------------------------------
-  test("passes --session-id even when reset:true is also set", async () => {
+  test("passes --session-id when reset:true and isNewSession:true", async () => {
     const sessionId = "8341c70a-f680-4ef2-96ac-cb055c51d94b";
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
@@ -724,19 +745,19 @@ describe("executor — session ID flag (HAN-31)", () => {
       return proc;
     });
 
-    await executePrompt(WORK_DIR, "session with reset", { sessionId, reset: true });
+    await executePrompt(WORK_DIR, "session with reset", { sessionId, reset: true, isNewSession: true });
 
     expect(lastSpawnArgs).toContain("--session-id");
     const idx = lastSpawnArgs.indexOf("--session-id");
     expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
-    // -c must still be absent
     expect(lastSpawnArgs).not.toContain("-c");
+    expect(lastSpawnArgs).not.toContain("--resume");
   });
 
   // -------------------------------------------------------------------------
-  // S5. sessionId in streaming mode → --session-id appears
+  // S5. sessionId in streaming mode → --resume appears (existing session)
   // -------------------------------------------------------------------------
-  test("passes --session-id in streaming mode when sessionId is provided", async () => {
+  test("passes --resume in streaming mode when sessionId is provided", async () => {
     const sessionId = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
     let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
 
@@ -764,16 +785,17 @@ describe("executor — session ID flag (HAN-31)", () => {
     setImmediate(() => capturedProc?._triggerExit());
     await completionPromise;
 
-    expect(lastSpawnArgs).toContain("--session-id");
-    const idx = lastSpawnArgs.indexOf("--session-id");
+    expect(lastSpawnArgs).toContain("--resume");
+    const idx = lastSpawnArgs.indexOf("--resume");
     expect(lastSpawnArgs[idx + 1]).toBe(sessionId);
     expect(lastSpawnArgs).not.toContain("-c");
+    expect(lastSpawnArgs).not.toContain("--session-id");
   });
 
   // -------------------------------------------------------------------------
-  // S6. No sessionId in streaming mode, no reset → no --session-id
+  // S6. No sessionId in streaming mode → no --session-id and no --resume
   // -------------------------------------------------------------------------
-  test("does not pass --session-id in streaming mode when no sessionId provided", async () => {
+  test("does not pass --session-id or --resume in streaming mode when no sessionId provided", async () => {
     let capturedProc: ReturnType<typeof makeFakeProc> | null = null;
 
     spawnMock.mockImplementationOnce((_cmd, args, options) => {
@@ -801,5 +823,6 @@ describe("executor — session ID flag (HAN-31)", () => {
     await completionPromise;
 
     expect(lastSpawnArgs).not.toContain("--session-id");
+    expect(lastSpawnArgs).not.toContain("--resume");
   });
 });

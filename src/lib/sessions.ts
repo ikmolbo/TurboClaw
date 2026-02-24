@@ -74,13 +74,13 @@ export function writeSessionId(agentId: string, sessionId: string, sessionsFile 
  * @param sessionsFile - Path to the sessions YAML file. Defaults to ~/.turboclaw/sessions.yaml.
  * @returns The UUID string for the agent.
  */
-export function getOrCreateSessionId(agentId: string, sessionsFile = DEFAULT_SESSIONS_FILE): string {
+export function getOrCreateSessionId(agentId: string, sessionsFile = DEFAULT_SESSIONS_FILE): { sessionId: string; isNew: boolean } {
   const existing = readSessionId(agentId, sessionsFile);
   if (existing !== null) {
-    return existing;
+    return { sessionId: existing, isNew: false };
   }
 
   const newId = randomUUID();
   writeSessionId(agentId, newId, sessionsFile);
-  return newId;
+  return { sessionId: newId, isNew: true };
 }

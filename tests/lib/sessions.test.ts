@@ -188,29 +188,33 @@ describe("writeSessionId", () => {
 // ============================================================================
 
 describe("getOrCreateSessionId", () => {
-  test("returns the existing UUID when agent is already in the file", () => {
+  test("returns the existing UUID with isNew:false when agent is already in the file", () => {
     const existingUuid = "c0fb47e4-1f0f-47f1-917d-5b4714f3a156";
     fs.writeFileSync(sessionsFile, `coder: ${existingUuid}\n`, "utf-8");
 
     const result = getOrCreateSessionId("coder", sessionsFile);
-    expect(result).toBe(existingUuid);
+    expect(result.sessionId).toBe(existingUuid);
+    expect(result.isNew).toBe(false);
   });
 
-  test("returns a string when agent is not yet in the file", () => {
+  test("returns a new UUID with isNew:true when agent is not yet in the file", () => {
     const result = getOrCreateSessionId("newagent", sessionsFile);
-    expect(typeof result).toBe("string");
-    expect(result.length).toBeGreaterThan(0);
+    expect(typeof result.sessionId).toBe("string");
+    expect(result.sessionId.length).toBeGreaterThan(0);
+    expect(result.isNew).toBe(true);
   });
 
   test("generated UUID matches the standard UUID v4 format", () => {
     const result = getOrCreateSessionId("newagent", sessionsFile);
-    expect(result).toMatch(UUID_REGEX);
+    expect(result.sessionId).toMatch(UUID_REGEX);
   });
 
   test("generated UUID is persisted so subsequent calls return the same value", () => {
     const first = getOrCreateSessionId("newagent", sessionsFile);
     const second = getOrCreateSessionId("newagent", sessionsFile);
-    expect(first).toBe(second);
+    expect(first.sessionId).toBe(second.sessionId);
+    expect(first.isNew).toBe(true);
+    expect(second.isNew).toBe(false);
   });
 
   test("creates the sessions file when it does not exist", () => {
@@ -219,9 +223,9 @@ describe("getOrCreateSessionId", () => {
   });
 
   test("different agents get different UUIDs when created from scratch", () => {
-    const id1 = getOrCreateSessionId("agent-alpha", sessionsFile);
-    const id2 = getOrCreateSessionId("agent-beta", sessionsFile);
-    expect(id1).not.toBe(id2);
+    const r1 = getOrCreateSessionId("agent-alpha", sessionsFile);
+    const r2 = getOrCreateSessionId("agent-beta", sessionsFile);
+    expect(r1.sessionId).not.toBe(r2.sessionId);
   });
 
   test("works when the sessions file does not exist (no prior file needed)", () => {
@@ -229,7 +233,8 @@ describe("getOrCreateSessionId", () => {
     expect(fs.existsSync(sessionsFile)).toBe(false);
 
     const result = getOrCreateSessionId("fresh-agent", sessionsFile);
-    expect(result).toMatch(UUID_REGEX);
+    expect(result.sessionId).toMatch(UUID_REGEX);
+    expect(result.isNew).toBe(true);
     expect(fs.existsSync(sessionsFile)).toBe(true);
   });
 });
@@ -259,17 +264,17 @@ describe("multiple agents in sessions.yaml", () => {
     const gamma = getOrCreateSessionId("gamma", sessionsFile);
 
     // All UUIDs must be valid
-    expect(alpha).toMatch(UUID_REGEX);
-    expect(beta).toMatch(UUID_REGEX);
-    expect(gamma).toMatch(UUID_REGEX);
+    expect(alpha.sessionId).toMatch(UUID_REGEX);
+    expect(beta.sessionId).toMatch(UUID_REGEX);
+    expect(gamma.sessionId).toMatch(UUID_REGEX);
 
     // All must be unique
-    const ids = new Set([alpha, beta, gamma]);
+    const ids = new Set([alpha.sessionId, beta.sessionId, gamma.sessionId]);
     expect(ids.size).toBe(3);
 
     // Re-reading must return the same values
-    expect(getOrCreateSessionId("alpha", sessionsFile)).toBe(alpha);
-    expect(getOrCreateSessionId("beta", sessionsFile)).toBe(beta);
-    expect(getOrCreateSessionId("gamma", sessionsFile)).toBe(gamma);
+    expect(getOrCreateSessionId("alpha", sessionsFile).sessionId).toBe(alpha.sessionId);
+    expect(getOrCreateSessionId("beta", sessionsFile).sessionId).toBe(beta.sessionId);
+    expect(getOrCreateSessionId("gamma", sessionsFile).sessionId).toBe(gamma.sessionId);
   });
 });

@@ -28,7 +28,7 @@ import {
   startTelegramBot,
   startTelegramSender,
 } from "../channels/telegram";
-import { getOrCreateSessionId, writeSessionId } from "../lib/sessions";
+import { getOrCreateSessionId, readSessionId, writeSessionId } from "../lib/sessions";
 import { processTasksNonBlocking } from "../scheduler/index";
 import path from "path";
 import os from "os";
@@ -156,20 +156,38 @@ export async function handleMessage(
 
   // Resolve session ID for this execution
   let sessionId: string;
+  let isNewSession = false;
   if (shouldReset) {
     // Fresh session on reset
     sessionId = randomUUID();
     writeSessionId(agentId, sessionId);
+    isNewSession = true;
   } else if (message.sessionId) {
     // Reply-to: switch to the referenced session
     writeSessionId(agentId, message.sessionId);
     sessionId = message.sessionId;
+  } else if (message.sessionMode === "isolated") {
+    // Isolated: new throwaway session, don't persist to sessions.yaml
+    sessionId = randomUUID();
+    isNewSession = true;
+  } else if (message.sessionMode === "current") {
+    // Explicit current: use existing session without creating one
+    const existing = readSessionId(agentId);
+    if (existing) {
+      sessionId = existing;
+    } else {
+      const result = getOrCreateSessionId(agentId);
+      sessionId = result.sessionId;
+      isNewSession = result.isNew;
+    }
   } else {
-    // Continue existing session (or create one if this is the first message)
-    sessionId = getOrCreateSessionId(agentId);
+    // Default: continue existing session (or create one if this is the first message)
+    const result = getOrCreateSessionId(agentId);
+    sessionId = result.sessionId;
+    isNewSession = result.isNew;
   }
 
-  const execOptions = { agentId, config, reset: shouldReset, sessionId };
+  const execOptions = { agentId, config, reset: shouldReset, sessionId, isNewSession };
 
   // Heartbeat messages use non-streaming execution (no tool-call UI needed)
   if (message.sender === "heartbeat") {
@@ -208,6 +226,9 @@ export async function handleMessage(
           }
         },
         onComplete: async (result) => {
+          if (!result.success) {
+            logger.error("Claude execution failed", { agentId, exitCode: result.exitCode, error: result.error });
+          }
           const output = result.output || "";
           if (streamer) {
             await streamer.finalize(output);

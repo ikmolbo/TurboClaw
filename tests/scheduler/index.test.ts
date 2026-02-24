@@ -251,6 +251,33 @@ describe("validateTask — schema validation", () => {
       const result = validateTask(task);
       expect(result.success).toBe(true);
     });
+
+    test("accepts session:'isolated' on agent-message action", () => {
+      const result = validateTask({
+        name: "Test", schedule: "0 9 * * *", enabled: true,
+        action: { type: "agent-message", agent: "coder", message: "hi", session: "isolated" },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test("accepts session:'latest' on agent-message action", () => {
+      const result = validateTask({
+        name: "Test", schedule: "0 9 * * *", enabled: true,
+        action: { type: "agent-message", agent: "coder", message: "hi", session: "latest" },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test("defaults session to 'isolated' when omitted", () => {
+      const result = validateTask({
+        name: "Test", schedule: "0 9 * * *", enabled: true,
+        action: { type: "agent-message", agent: "coder", message: "hi" },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.action.session).toBe("isolated");
+      }
+    });
   });
 });
 
@@ -592,6 +619,42 @@ describe("executeTask — action type dispatch", () => {
     const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
     expect(content.channel).toBe("internal");
     expect(content.senderId).toBe("scheduler");
+  });
+
+  test("agent-message defaults to sessionMode:'isolated' when session omitted", async () => {
+    const task = makeAgentMessageTask({
+      action: { type: "agent-message", agent: "coder", message: "test" },
+    });
+
+    await executeTask(task, queueDir);
+
+    const files = require("fs").readdirSync(incomingDir);
+    const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
+    expect(content.sessionMode).toBe("isolated");
+  });
+
+  test("agent-message with session:'latest' sets sessionMode:'current'", async () => {
+    const task = makeAgentMessageTask({
+      action: { type: "agent-message", agent: "coder", message: "test", session: "latest" },
+    });
+
+    await executeTask(task, queueDir);
+
+    const files = require("fs").readdirSync(incomingDir);
+    const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
+    expect(content.sessionMode).toBe("current");
+  });
+
+  test("agent-message with session:'isolated' sets sessionMode:'isolated'", async () => {
+    const task = makeAgentMessageTask({
+      action: { type: "agent-message", agent: "coder", message: "test", session: "isolated" },
+    });
+
+    await executeTask(task, queueDir);
+
+    const files = require("fs").readdirSync(incomingDir);
+    const content = JSON.parse(readFileSync(join(incomingDir, files[0]), "utf-8"));
+    expect(content.sessionMode).toBe("isolated");
   });
 
   // --- heartbeat ---
