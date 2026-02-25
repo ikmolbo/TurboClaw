@@ -79,4 +79,5 @@ export async function startCommand(args: string[] = []): Promise<void> {
   console.log(`Started TurboClaw in tmux session '${TMUX_SESSION}'.`);
   console.log(`  View live logs:  tmux attach -t ${TMUX_SESSION}`);
   console.log(`  Detach:          Ctrl-B then d`);
+  process.exit(0);
 }

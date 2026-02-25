@@ -30,9 +30,9 @@ export async function stopCommand(pidFile: string = DEFAULT_PID_FILE): Promise<v
     process.exit(1);
   }
 
-  // Clean up the tmux session (fire-and-forget, ignore errors)
+  // Clean up the tmux session (ignore errors)
   try {
-    Bun.spawn(["tmux", "kill-session", "-t", TMUX_SESSION], {
+    Bun.spawnSync(["tmux", "kill-session", "-t", TMUX_SESSION], {
       stdout: "ignore",
       stderr: "ignore",
     });
