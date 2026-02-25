@@ -122,9 +122,10 @@ describe("CLI", () => {
       expect(result.command).toBe("unknown");
     });
 
-    it("should return unknown for removed 'restart' command", () => {
+    it("should parse restart command", () => {
       const result = parseArgs(["restart"]);
-      expect(result.command).toBe("unknown");
+      expect(result.command).toBe("restart");
+      expect(result.args).toEqual([]);
     });
 
     it("should return unknown for removed 'pairing' command", () => {
@@ -148,6 +149,7 @@ describe("CLI", () => {
       const validCommands = [
         "start",
         "stop",
+        "restart",
         "status",
         "agents",
         "schedule",
@@ -162,6 +164,14 @@ describe("CLI", () => {
       validCommands.forEach((cmd) => {
         expect(() => parseArgs([cmd])).not.toThrow();
       });
+    });
+  });
+
+  describe("start command — args passthrough", () => {
+    it("should pass --foreground flag through args", () => {
+      const result = parseArgs(["start", "--foreground"]);
+      expect(result.command).toBe("start");
+      expect(result.args).toEqual(["--foreground"]);
     });
   });
 

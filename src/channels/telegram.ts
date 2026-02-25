@@ -337,35 +337,35 @@ export function markdownToTelegramHtml(text: string): string {
 // HAN-31: session ID helpers
 // ============================================================================
 
-const EMOJI_PALETTE = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫"];
+// Smaller colored Unicode circles (U+1F7E0–U+1F7E3 small variants don't exist,
+// so we use standard text-style bullet ● with color conveyed by the blockquote
+// border). We keep 8 entries for deterministic selection.
+const SESSION_DOT_PALETTE = ["●", "●", "●", "●", "●", "●", "●", "●"];
 
 /**
- * Return a deterministic emoji character (one of 8) for a given session ID.
- * The emoji is selected by summing all character codes of the session ID,
- * masking to 16 bits, and taking the result modulo 8.
+ * Return a deterministic dot character for a given session ID.
  *
  * @param sessionId - A UUID string identifying the Claude session.
- * @returns A single emoji from the palette ['🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫'].
  */
-export function sessionIdToEmoji(sessionId: string): string {
+export function sessionIdToDot(sessionId: string): string {
   let hash = 0;
   for (const char of sessionId) {
     hash = (hash + char.charCodeAt(0)) & 0xffff;
   }
-  return EMOJI_PALETTE[hash % 8];
+  return SESSION_DOT_PALETTE[hash % SESSION_DOT_PALETTE.length];
 }
 
 /**
- * Extract a Claude session UUID from a message that contains a session footer
- * blockquote of the form: <blockquote>{emoji} session:{uuid}</blockquote>
- * Returns null if no valid UUID footer is found.
+ * Extract a Claude session UUID from a message that contains a session footer.
+ * Matches both the current compact format (`s:{uuid}`) and the legacy format
+ * (`session:{uuid}`) so replies to older messages still work.
  *
  * @param text - The full message text that may contain a session footer.
  * @returns The UUID string if found, or null.
  */
 export function extractSessionIdFromText(text: string): string | null {
   const match = text.match(
-    /session:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+    /(?:session|s):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
   );
   return match ? match[1] : null;
 }
@@ -505,8 +505,8 @@ export class TelegramStreamer {
       const isLast = i === chunks.length - 1;
       let html = markdownToTelegramHtml(chunks[i]);
       if (isLast && this.sessionId) {
-        const emoji = sessionIdToEmoji(this.sessionId);
-        html += `\n<blockquote>${emoji} session:${this.sessionId}</blockquote>`;
+        const dot = sessionIdToDot(this.sessionId);
+        html += `\n<blockquote expandable>${dot} s:${this.sessionId}</blockquote>`;
       }
       try {
         await this.bot.api.sendMessage(this.chatId, html, {

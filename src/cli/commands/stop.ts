@@ -5,7 +5,8 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 
-const DEFAULT_PID_FILE = path.join(os.homedir(), ".turboclaw", "turboclaw.pid");
+const DEFAULT_PID_FILE = path.join(os.homedir(), ".turboclaw", "daemon.pid");
+const TMUX_SESSION = "turboclaw";
 
 export async function stopCommand(pidFile: string = DEFAULT_PID_FILE): Promise<void> {
   if (!fs.existsSync(pidFile)) {
@@ -27,5 +28,15 @@ export async function stopCommand(pidFile: string = DEFAULT_PID_FILE): Promise<v
   } catch (error) {
     console.error(`Failed to stop daemon (PID ${pid}):`, error);
     process.exit(1);
+  }
+
+  // Clean up the tmux session (fire-and-forget, ignore errors)
+  try {
+    Bun.spawn(["tmux", "kill-session", "-t", TMUX_SESSION], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch {
+    // tmux not installed or session doesn't exist — fine
   }
 }

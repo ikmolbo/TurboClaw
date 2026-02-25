@@ -20,6 +20,18 @@ if ! command -v bun &> /dev/null; then
     echo "✅ Bun installed"
 fi
 
+# Check if tmux is installed, install if missing
+if ! command -v tmux &> /dev/null; then
+    echo "📦 tmux not found, installing..."
+    if command -v brew &> /dev/null; then
+        brew install tmux
+    elif command -v apt-get &> /dev/null; then
+        sudo apt-get install -y tmux
+    else
+        echo "⚠️  Please install tmux manually"
+    fi
+fi
+
 # Get the script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 

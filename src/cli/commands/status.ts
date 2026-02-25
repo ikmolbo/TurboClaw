@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 
-const DEFAULT_PID_FILE = path.join(os.homedir(), ".turboclaw", "turboclaw.pid");
+const DEFAULT_PID_FILE = path.join(os.homedir(), ".turboclaw", "daemon.pid");
 
 export async function statusCommand(): Promise<void> {
   console.log("TurboClaw Status");
@@ -51,8 +51,10 @@ export async function statusCommand(): Promise<void> {
 
   // Helpful commands
   if (running) {
+    console.log(`Session: tmux attach -t turboclaw`);
     console.log("\nCommands:");
     console.log("   turboclaw stop              - Stop daemon");
+    console.log("   turboclaw restart           - Restart daemon");
   } else {
     console.log("\nCommands:");
     console.log("   turboclaw start             - Start daemon");

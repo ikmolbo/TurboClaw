@@ -3,6 +3,7 @@
 export type CLICommand =
   | "start"
   | "stop"
+  | "restart"
   | "status"
   | "agents"
   | "schedule"
@@ -42,7 +43,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   // Handle commands
-  const validCommands: CLICommand[] = ["start", "stop", "status", "agents", "schedule", "send", "memory", "reset-context", "reset-crashes", "setup"];
+  const validCommands: CLICommand[] = ["start", "stop", "restart", "status", "agents", "schedule", "send", "memory", "reset-context", "reset-crashes", "setup"];
 
   if (validCommands.includes(firstArg as CLICommand)) {
     return {
@@ -70,8 +71,10 @@ Usage:
 
 Commands:
   setup              Interactive setup wizard (create or update config)
-  start              Start the daemon
+  start              Start the daemon (in tmux session)
+  start --foreground Start the daemon in the foreground (for debugging)
   stop               Stop the daemon
+  restart            Restart the daemon
   status             Show system status
   agents [cmd]       Manage agents (list, add, show, remove, install-skill)
   schedule [cmd]     Manage scheduled tasks (list, add, remove, enable, disable)
@@ -119,7 +122,13 @@ async function executeCommand(parsed: ParsedArgs) {
 
     case "start": {
       const { startCommand } = await import("./commands/start");
-      await startCommand();
+      await startCommand(parsed.args);
+      break;
+    }
+
+    case "restart": {
+      const { restartCommand } = await import("./commands/restart");
+      await restartCommand(parsed.args);
       break;
     }
 

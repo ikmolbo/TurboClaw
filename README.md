@@ -118,12 +118,26 @@ See `examples/config.yaml` for the full documented example.
 ## Daemon
 
 ```bash
-turboclaw start    # Start daemon in background (PID file at ~/.turboclaw/daemon.pid)
-turboclaw stop     # Stop daemon
-turboclaw status   # Show daemon status, agent list, queue depth
+turboclaw start              # Start daemon in a tmux session (non-blocking)
+turboclaw start --foreground # Start daemon in the foreground (for debugging)
+turboclaw stop               # Stop daemon
+turboclaw restart            # Restart daemon
+turboclaw status             # Show daemon status, agent list, queue depth
 ```
 
-The daemon is a single foreground process managed by a PID file. It polls the queue every second, runs the scheduler every 30 seconds, and fires heartbeats on each agent's configured interval.
+The daemon runs inside a **tmux** session by default, so `turboclaw start` returns immediately and works over SSH without losing the session. The PID file lives at `~/.turboclaw/daemon.pid`.
+
+To view live logs, attach to the tmux session:
+
+```bash
+tmux attach -t turboclaw
+```
+
+To detach without stopping the daemon: press **Ctrl-B**, then **d**.
+
+> **Note:** tmux is required and is installed automatically by `install.sh`. To install it manually: `brew install tmux` (macOS) or `sudo apt-get install tmux` (Linux).
+
+The daemon polls the queue every second, runs the scheduler every 30 seconds, and fires heartbeats on each agent's configured interval.
 
 ## Managing Agents
 
