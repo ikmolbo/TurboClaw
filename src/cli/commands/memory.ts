@@ -82,10 +82,10 @@ function readMemory(agentId: string, config: Config, consolidated: boolean): voi
  * Append an entry to memory.
  *
  * Default: appends to today's daily log (memory/daily/YYYY-MM-DD.md).
- *   Format: ## HH:MM @agent-id - [tag] message
+ *   Format: - HH:MM @agent-id - [tag] message
  *
  * With --consolidated: appends a raw line to long-term memory (memory/MEMORY.md).
- *   The caller is responsible for formatting (typically ## YYYY-MM-DD [tag] text).
+ *   The caller is responsible for formatting (typically - YYYY-MM-DD HH:MM @agent - [tag] text).
  */
 function writeMemory(
   agentId: string,
@@ -109,7 +109,7 @@ function writeMemory(
       mkdirSync(dailyDir, { recursive: true });
     }
     const dailyFile = join(dailyDir, `${dateStamp()}.md`);
-    const line = `## ${timeStamp()} @${agentId} - [${tag}] ${message}\n`;
+    const line = `- ${timeStamp()} @${agentId} - [${tag}] ${message}\n`;
     appendFileSync(dailyFile, line, "utf-8");
     console.log(`Logged to daily/${dateStamp()}.md`);
   }

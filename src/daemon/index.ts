@@ -22,7 +22,7 @@ import {
   initializeQueue,
   type IncomingMessage,
 } from "../lib/queue";
-import { executePrompt, executePromptStreaming } from "../agents/executor";
+import { executePrompt, executePromptStreaming, type StreamingHandle } from "../agents/executor";
 import {
   TelegramStreamer,
   startTelegramBot,
@@ -71,6 +71,7 @@ export interface DaemonOptions {
   pidFile?: string;
   baseDir?: string;
   resetDir?: string;
+  interruptDir?: string;
   _onStart?: () => void;
 }
 
@@ -128,6 +129,34 @@ export function checkResetContext(agentId: string, resetDir?: string): boolean {
 }
 
 // ============================================================================
+// INTERRUPT SIGNAL
+// ============================================================================
+
+/**
+ * Check if an interrupt signal file exists for the given agentId.
+ * If it does, delete it and return the file contents (target session ID,
+ * or empty string for "interrupt any session"). Returns null if no signal.
+ *
+ * Default interruptDir: ~/.turboclaw/interrupt
+ */
+export function readInterruptSignal(agentId: string, interruptDir?: string): string | null {
+  const dir = interruptDir ?? path.join(os.homedir(), ".turboclaw", "interrupt");
+  const signalFile = path.join(dir, agentId);
+
+  try {
+    if (fs.existsSync(signalFile)) {
+      const content = fs.readFileSync(signalFile, "utf-8").trim();
+      fs.unlinkSync(signalFile);
+      return content;
+    }
+  } catch {
+    // Silently ignore errors
+  }
+
+  return null;
+}
+
+// ============================================================================
 // MESSAGE HANDLER
 // ============================================================================
 
@@ -139,7 +168,13 @@ export function checkResetContext(agentId: string, resetDir?: string): boolean {
 export async function handleMessage(
   message: IncomingMessage,
   config: Config,
-  options?: { queueDir?: string; resetDir?: string; bot?: any }
+  options?: {
+    queueDir?: string;
+    resetDir?: string;
+    bot?: any;
+    activeExecutions?: Map<string, { handle: StreamingHandle; sessionId: string }>;
+    interruptedAgents?: Set<string>;
+  }
 ): Promise<void> {
   const agentId = message.agentId;
 
@@ -193,12 +228,16 @@ export async function handleMessage(
   if (message.sender === "heartbeat") {
     const result = await executePrompt(workingDirectory, message.message, execOptions);
     const output = result.output || "";
-    if (output.trim() === "HEARTBEAT_OK") {
+    // Strip ANSI escape codes and check if output is just HEARTBEAT_OK
+    const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "").trim();
+    if (cleaned === "HEARTBEAT_OK") {
       logger.info("Heartbeat OK — no action needed", { agentId });
     } else if (message.channel === "telegram") {
       const chatId = parseInt(message.senderId as string);
       const streamer = new TelegramStreamer(options?.bot ?? null, chatId, agentId, sessionId);
       await streamer.finalize(output);
+    } else {
+      logger.info("Heartbeat response (no telegram channel)", { agentId, output: output.substring(0, 100) });
     }
     return;
   }
@@ -211,7 +250,7 @@ export async function handleMessage(
   }
 
   return new Promise<void>((resolve) => {
-    executePromptStreaming(
+    const handle = executePromptStreaming(
       workingDirectory,
       message.message,
       {
@@ -226,6 +265,25 @@ export async function handleMessage(
           }
         },
         onComplete: async (result) => {
+          options?.activeExecutions?.delete(agentId);
+
+          // If this agent was interrupted, clean up and send "Interrupted." instead
+          if (options?.interruptedAgents?.has(agentId)) {
+            options.interruptedAgents.delete(agentId);
+            logger.info("Execution interrupted", { agentId });
+            if (streamer) {
+              await streamer.finalize("");
+              const chatId = parseInt(message.senderId as string);
+              try {
+                await options?.bot?.api.sendMessage(chatId, "Interrupted.");
+              } catch (err) {
+                logger.warn("Failed to send interrupt notification", { err });
+              }
+            }
+            resolve();
+            return;
+          }
+
           if (!result.success) {
             logger.error("Claude execution failed", { agentId, exitCode: result.exitCode, error: result.error });
           }
@@ -236,12 +294,18 @@ export async function handleMessage(
           resolve();
         },
         onError: (error: Error) => {
+          options?.activeExecutions?.delete(agentId);
           logger.error("Executor error", error);
           resolve();
         },
       },
       execOptions
     );
+
+    // Store the handle so the daemon loop can interrupt this execution
+    if (agentId) {
+      options?.activeExecutions?.set(agentId, { handle, sessionId });
+    }
   });
 }
 
@@ -276,6 +340,8 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     options?.pidFile ?? path.join(os.homedir(), ".turboclaw", "daemon.pid");
   const resetDir =
     options?.resetDir ?? path.join(os.homedir(), ".turboclaw", "reset");
+  const interruptDir =
+    options?.interruptDir ?? path.join(os.homedir(), ".turboclaw", "interrupt");
 
   // Set up file logging with rotation
   const logsDir = path.join(baseDir, "logs");
@@ -349,7 +415,7 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
     // If no bots started (empty config or no telegram agents),
     // run one scheduler tick and return
     if (bots.length === 0) {
-      await processTasksNonBlocking(tasksDir, queueDir, new Date());
+      await processTasksNonBlocking(tasksDir, queueDir, new Date(), config.env);
       return;
     }
 
@@ -366,6 +432,8 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
 
     // Main polling loop
     const busyAgents = new Set<string>();
+    const activeExecutions = new Map<string, { handle: StreamingHandle; sessionId: string }>();
+    const interruptedAgents = new Set<string>();
     let lastSchedulerRun = 0;
     let lastConfigReload = Date.now();
     const SCHEDULER_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -396,7 +464,10 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
           const agentId = queued.message.agentId ?? "";
           busyAgents.add(agentId);
           const bot = agentBots.get(agentId);
-          handleMessage(queued.message, config, { queueDir, resetDir, bot })
+          handleMessage(queued.message, config, {
+            queueDir, resetDir, bot,
+            activeExecutions, interruptedAgents,
+          })
             .catch((err) => {
               logger.error("handleMessage error", err);
             })
@@ -408,11 +479,33 @@ export async function runDaemon(options?: DaemonOptions): Promise<void> {
         logger.error("Error reading incoming queue", error);
       }
 
+      // Check for interrupt signals on busy agents
+      for (const agentId of busyAgents) {
+        const targetSessionId = readInterruptSignal(agentId, interruptDir);
+        if (targetSessionId !== null) {
+          const execution = activeExecutions.get(agentId);
+          if (execution) {
+            // Empty string = interrupt any session; otherwise must match
+            if (targetSessionId === "" || targetSessionId === execution.sessionId) {
+              interruptedAgents.add(agentId);
+              execution.handle.cancel();
+              logger.info("Interrupt signal processed", { agentId, targetSessionId });
+            } else {
+              logger.info("Interrupt signal ignored — session mismatch", {
+                agentId,
+                targetSessionId,
+                runningSessionId: execution.sessionId,
+              });
+            }
+          }
+        }
+      }
+
       // Run scheduler tick every ~30s
       const now = Date.now();
       if (now - lastSchedulerRun >= SCHEDULER_INTERVAL_MS) {
         lastSchedulerRun = now;
-        processTasksNonBlocking(tasksDir, queueDir, new Date()).catch((err) => {
+        processTasksNonBlocking(tasksDir, queueDir, new Date(), config.env).catch((err) => {
           logger.error("Scheduler tick error", err);
         });
       }

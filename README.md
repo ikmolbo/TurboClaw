@@ -85,6 +85,12 @@ workspace:
 # allowed_users:
 #   - 123456789
 
+# Environment variables passed to scheduled commands and agent sessions
+# env:
+#   LINEAR_API_TOKEN: ""             # Linear API token (for task-worker)
+#   CLAUDE_CODE_OAUTH_TOKEN: ""      # Claude OAuth token (for task-worker usage checks)
+#   GH_TOKEN: ""                     # GitHub personal access token
+
 providers:
   anthropic:
     # api_key: sk-ant-...       # or use ANTHROPIC_API_KEY env var

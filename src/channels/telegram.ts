@@ -548,6 +548,12 @@ export async function startTelegramBot(
     botToken: botToken.substring(0, 20) + "...",
   });
 
+  // Register bot commands menu
+  await bot.api.setMyCommands([
+    { command: "reset", description: "Reset context for an agent" },
+    { command: "interrupt", description: "Interrupt a running agent execution" },
+  ]);
+
   // Handle /reset command
   bot.command("reset", async (ctx: Context) => {
     try {
@@ -609,6 +615,79 @@ export async function startTelegramBot(
     } catch (error) {
       logger.error("Error handling reset command", error);
       await ctx.reply("Error processing reset command. Please try again.");
+    }
+  });
+
+  // Handle /interrupt command
+  bot.command("interrupt", async (ctx: Context) => {
+    try {
+      if (!ctx.from) return;
+
+      if (!isUserAllowed(ctx.from.id, allowedUsers ?? [])) {
+        logger.info("Unauthorized /interrupt attempt", {
+          userId: ctx.from.id,
+          username: ctx.from.first_name,
+        });
+        return;
+      }
+
+      logger.info("Interrupt command received", { from: ctx.from.first_name });
+
+      const configPath = path.join(os.homedir(), ".turboclaw", "config.yaml");
+      const { loadConfig } = await import("../config");
+      const config = await loadConfig(configPath);
+
+      // Resolve target agent ID from args or bot's own agentId
+      const argString = ctx.message?.text?.replace(/^\/interrupt\s*/i, "").trim();
+      let targetAgentId: string | undefined;
+
+      if (argString && argString.trim() !== "") {
+        targetAgentId = argString.split(/\s+/)[0].replace(/^@/, "");
+      } else if (agentId) {
+        targetAgentId = agentId;
+      } else {
+        await ctx.reply("Usage: /interrupt [@agent_id]");
+        return;
+      }
+
+      const agent = config.agents[targetAgentId];
+      if (!agent) {
+        await ctx.reply(`Agent '${targetAgentId}' not found.`);
+        return;
+      }
+
+      // Extract target session ID from reply-to message footer if present
+      let targetSessionId = "";
+      if (ctx.message?.reply_to_message) {
+        const replyText =
+          (ctx.message.reply_to_message as any).text ||
+          (ctx.message.reply_to_message as any).caption ||
+          "";
+        const extracted = extractSessionIdFromText(replyText);
+        if (extracted) {
+          targetSessionId = extracted;
+        }
+      }
+
+      // Write interrupt signal file
+      const interruptDir = path.join(os.homedir(), ".turboclaw", "interrupt");
+      const signalFile = path.join(interruptDir, targetAgentId);
+      try {
+        fs.mkdirSync(interruptDir, { recursive: true });
+        fs.writeFileSync(signalFile, targetSessionId);
+        await ctx.reply(`Interrupting @${targetAgentId}...`);
+        logger.info("Interrupt signal written", {
+          agentId: targetAgentId,
+          signalFile,
+          targetSessionId: targetSessionId || "(any)",
+        });
+      } catch (error) {
+        await ctx.reply(`Failed to interrupt @${targetAgentId}: ${error}`);
+        logger.error("Failed to write interrupt signal", { agentId: targetAgentId, error });
+      }
+    } catch (error) {
+      logger.error("Error handling interrupt command", error);
+      await ctx.reply("Error processing interrupt command. Please try again.");
     }
   });
 

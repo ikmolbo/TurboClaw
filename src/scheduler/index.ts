@@ -200,15 +200,20 @@ export async function saveTask(filepath: string, task: Task): Promise<void> {
 
 export async function executeTask(
   task: Task,
-  queueDir?: string
+  queueDir?: string,
+  envVars?: Record<string, string>
 ): Promise<{ success: boolean; message?: string; error?: string; skipped?: boolean }> {
   const { action } = task;
 
   // Check condition gate first
   if (action.condition) {
+    const condEnv = envVars
+      ? { ...process.env, ...envVars }
+      : undefined;
     const condProc = Bun.spawn(["sh", "-c", action.condition], {
       stdout: "pipe",
       stderr: "pipe",
+      env: condEnv,
     });
     const exitCode = await condProc.exited;
     if (exitCode !== 0) {
@@ -254,9 +259,13 @@ export async function executeTask(
 
     case "command": {
       const cmd = action.command!;
+      const env = envVars
+        ? { ...process.env, ...envVars }
+        : undefined;
       const proc = Bun.spawn(["sh", "-c", cmd], {
         stdout: "pipe",
         stderr: "pipe",
+        env,
       });
       const exitCode = await proc.exited;
       const stdout = await new Response(proc.stdout).text();
@@ -283,7 +292,8 @@ export async function executeTask(
 export async function processTasksNonBlocking(
   tasksDir: string,
   queueDir: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  envVars?: Record<string, string>
 ): Promise<{ executed: number; skipped: number; errors: number }> {
   const result = { executed: 0, skipped: 0, errors: 0 };
 
@@ -311,7 +321,7 @@ export async function processTasksNonBlocking(
     // Fire in background (non-blocking)
     (async () => {
       try {
-        const taskResult = await executeTask(task, queueDir);
+        const taskResult = await executeTask(task, queueDir, envVars);
         if (taskResult.skipped) {
           logger.debug("Task skipped (condition not met)", { name: task.name });
         } else if (taskResult.success) {

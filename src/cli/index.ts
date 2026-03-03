@@ -9,6 +9,7 @@ export type CLICommand =
   | "schedule"
   | "send"
   | "reset-context"
+  | "interrupt"
   | "memory"
   | "reset-crashes"
   | "setup"
@@ -43,7 +44,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   // Handle commands
-  const validCommands: CLICommand[] = ["start", "stop", "restart", "status", "agents", "schedule", "send", "memory", "reset-context", "reset-crashes", "setup"];
+  const validCommands: CLICommand[] = ["start", "stop", "restart", "status", "agents", "schedule", "send", "memory", "reset-context", "interrupt", "reset-crashes", "setup"];
 
   if (validCommands.includes(firstArg as CLICommand)) {
     return {
@@ -81,6 +82,7 @@ Commands:
   memory [cmd]       Memory log and search (log, search)
   send               Send a message to a user
   reset-context <id> Reset context for an agent
+  interrupt <id>     Interrupt a running agent execution
   reset-crashes      Clear crash history (for manual recovery)
 
 Options:
@@ -241,6 +243,12 @@ async function executeCommand(parsed: ParsedArgs) {
     case "reset-context": {
       const { resetContextCommand } = await import("./commands/reset-context");
       await resetContextCommand(parsed.args);
+      break;
+    }
+
+    case "interrupt": {
+      const { interruptCommand } = await import("./commands/interrupt");
+      await interruptCommand(parsed.args);
       break;
     }
 
