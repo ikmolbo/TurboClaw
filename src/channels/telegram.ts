@@ -249,32 +249,41 @@ async function downloadTelegramFile(
  *      the complete final response (split into chunks if needed).
  */
 /**
- * Format a tool_use event into a short status line for display.
+ * Escape HTML special characters for safe use in Telegram HTML parse mode.
+ */
+function escHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Format a tool_use event into a short status line with a badge-style label.
+ * Returns HTML with the action wrapped in <code> tags for a badge effect.
  */
 function formatToolStatus(name: string, input: Record<string, any>): string {
   switch (name) {
     case "Read":
-      return `Reading ${basename(input.file_path ?? "")}`;
+      return `<code>Read</code> ${escHtml(basename(input.file_path ?? ""))}`;
     case "Edit":
-      return `Editing ${basename(input.file_path ?? "")}`;
+      return `<code>Edit</code> ${escHtml(basename(input.file_path ?? ""))}`;
     case "Write":
-      return `Writing ${basename(input.file_path ?? "")}`;
+      return `<code>Write</code> ${escHtml(basename(input.file_path ?? ""))}`;
     case "Bash": {
       const cmd = input.command ?? "";
-      return `Running: ${cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd}`;
+      const truncated = cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
+      return `<code>Run</code> ${escHtml(truncated)}`;
     }
     case "Grep":
-      return `Searching for "${input.pattern ?? ""}"`;
+      return `<code>Grep</code> ${escHtml(input.pattern ?? "")}`;
     case "Glob":
-      return `Finding files: ${input.pattern ?? ""}`;
+      return `<code>Glob</code> ${escHtml(input.pattern ?? "")}`;
     case "WebFetch":
-      return `Fetching ${input.url ?? ""}`;
+      return `<code>Fetch</code> ${escHtml(input.url ?? "")}`;
     case "WebSearch":
-      return `Searching: ${input.query ?? ""}`;
+      return `<code>Search</code> ${escHtml(input.query ?? "")}`;
     case "Task":
-      return `Launching subagent`;
+      return `<code>Agent</code>`;
     default:
-      return name;
+      return `<code>${escHtml(name)}</code>`;
   }
 }
 
@@ -453,13 +462,16 @@ export class TelegramStreamer {
     if (displayText === this.lastFlushedText) return;
 
     if (this.streamingMessageId === null) {
-      const sent = await this.bot.api.sendMessage(this.chatId, displayText);
+      const sent = await this.bot.api.sendMessage(this.chatId, displayText, {
+        parse_mode: "HTML",
+      });
       this.streamingMessageId = sent.message_id;
     } else {
       await this.bot.api.editMessageText(
         this.chatId,
         this.streamingMessageId,
-        displayText
+        displayText,
+        { parse_mode: "HTML" }
       );
     }
 
@@ -551,7 +563,7 @@ export async function startTelegramBot(
   // Register bot commands menu
   await bot.api.setMyCommands([
     { command: "reset", description: "Reset context for an agent" },
-    { command: "interrupt", description: "Interrupt a running agent execution" },
+    { command: "interrupt", description: "Interrupt agent" },
   ]);
 
   // Handle /reset command

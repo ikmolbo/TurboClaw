@@ -484,7 +484,8 @@ describe("TelegramStreamer", () => {
 
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0].chatId).toBe(CHAT_ID);
-    expect(sentMessages[0].text).toContain("Reading test.md");
+    expect(sentMessages[0].text).toContain("<code>Read</code> test.md");
+    expect(sentMessages[0].options).toMatchObject({ parse_mode: "HTML" });
     expect(editedMessages).toHaveLength(0);
   });
 
@@ -515,8 +516,9 @@ describe("TelegramStreamer", () => {
     expect(editedMessages).toHaveLength(1);
     expect(editedMessages[0].chatId).toBe(CHAT_ID);
     expect(editedMessages[0].messageId).toBe(1000);
-    expect(editedMessages[0].text).toContain("Reading a.ts");
-    expect(editedMessages[0].text).toContain("Editing b.ts");
+    expect(editedMessages[0].text).toContain("<code>Read</code> a.ts");
+    expect(editedMessages[0].text).toContain("<code>Edit</code> b.ts");
+    expect(editedMessages[0].options).toMatchObject({ parse_mode: "HTML" });
   });
 
   // -------------------------------------------------------------------------
